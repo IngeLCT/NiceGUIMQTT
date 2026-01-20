@@ -64,6 +64,87 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
         "avg_dropped_key": "avg_dropped",  # indicador opcional
     },
 
+    "Gyro": {
+        # claves mínimas esperadas (si falta una, se ignora el mensaje)
+        "required_keys": ["t_ms", "temp_c", "ax", "ay", "az", "gx", "gy", "gz"],
+
+        # métricas que se van a graficar (una gráfica por métrica)
+        "metrics": [
+            {
+                "id": "temp_c",
+                "json_key": "temp_c",
+                "scale": 1.0,
+                "label": "Temperatura",
+                "unit": "°C",
+                "color": "#ff7f0e",
+                "hover_name": "Temperatura",
+            },
+
+            # Aceleración (unidades: depende de tu IMU; común: m/s² o g)
+            # Si tu IMU entrega en "g", deja unit="g" y scale=1.0
+            # Si entrega en m/s², unit="m/s²" y scale=1.0
+            {
+                "id": "ax",
+                "json_key": "ax",
+                "scale": 1.0,
+                "label": "Aceleracion X",
+                "unit": "m/s²",
+                "color": "#1f77b4",
+                "hover_name": "Ax",
+            },
+            {
+                "id": "ay",
+                "json_key": "ay",
+                "scale": 1.0,
+                "label": "Aceleracion Y",
+                "unit": "m/s²",
+                "color": "#2ca02c",
+                "hover_name": "Ay",
+            },
+            {
+                "id": "az",
+                "json_key": "az",
+                "scale": 1.0,
+                "label": "Aceleracion Z",
+                "unit": "m/s²",
+                "color": "#d62728",
+                "hover_name": "Az",
+            },
+
+            # Giro (unidades: común: deg/s o rad/s)
+            # Ajusta unit según lo que mandes realmente.
+            {
+                "id": "gx",
+                "json_key": "gx",
+                "scale": 1.0,
+                "label": "Giro X",
+                "unit": "rad/s",
+                "color": "#9467bd",
+                "hover_name": "Gx",
+            },
+            {
+                "id": "gy",
+                "json_key": "gy",
+                "scale": 1.0,
+                "label": "Giro Y",
+                "unit": "rad/s",
+                "color": "#8c564b",
+                "hover_name": "Gy",
+            },
+            {
+                "id": "gz",
+                "json_key": "gz",
+                "scale": 1.0,
+                "label": "Giro Z",
+                "unit": "rad/s",
+                "color": "#e377c2",
+                "hover_name": "Gz",
+            },
+        ],
+
+        "avg_dropped_key": None,
+    },
+
     "Temp": {
         "required_keys": ["t_ms", "temp_c"],
         "metrics": [

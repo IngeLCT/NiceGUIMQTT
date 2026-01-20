@@ -293,7 +293,12 @@ def page_dashboard(sensor: str) -> None:
             if lbl is not None:
                 val = last_map.get(mid)
                 unit = m.get('unit', '')
-                lbl.text = f"{m['label']}: {val if val is not None else '--'} {unit}".strip()
+                if val is None:
+                    s = '--'
+                else:
+                    s = f'{float(val):.2f}'.rstrip('0').rstrip('.')  # 26.0 -> "26", 26.50 -> "26.5"
+
+                lbl.text = f"{m['label']}: {s} {unit}".strip()
 
         if dropped_label is not None:
             dropped_label.text = f"avg_dropped: {lavg if (show_avg and lavg is not None) else '--'}"
