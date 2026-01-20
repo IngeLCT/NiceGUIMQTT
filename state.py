@@ -52,6 +52,25 @@ available_sensors: set[str] = set()
 selected_sensor: Optional[str] = None
 current_topic: Optional[str] = None
 
+# Lista de sensores actualmente seleccionados (pueden ser varios).
+# Cuando ``selected_sensors`` contiene al menos un elemento, ``selected_sensor`` y
+# ``current_topic`` mantendrán el valor del primer sensor para preservar compatibilidad
+# hacia atrás. Utilice ``selected_sensors`` y ``current_topics`` para acceder a todos
+# los sensores y sus respectivos tópicos.
+selected_sensors: list[str] = []
+
+# Diccionario sensor -> tópico actual. Cada sensor seleccionado tiene su propia
+# suscripción en el broker MQTT, almacenada en este mapeo.
+current_topics: dict[str, str] = {}
+
+# Mapa de sensor -> conjunto de canales (métricas) actualmente activas. Se
+# actualiza desde la interfaz de usuario para permitir al usuario elegir qué
+# métricas graficar para cada sensor. Las claves son los nombres de los
+# sensores y los valores son conjuntos de identificadores de métricas (sin
+# prefijo de sensor). Si no existe una entrada para un sensor se asume que
+# todas sus métricas están activas.
+selected_channel_map: dict[str, set[str]] = {}
+
 # Clientes MQTT (tipados como Any para no acoplar a paho aqui)
 mqtt_client: Any = None
 supervisor_client: Any = None

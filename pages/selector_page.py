@@ -30,7 +30,10 @@ def page_index() -> None:
 
     with ui.row().classes('w-full items-center gap-4'):
         ui.label('Sensores').classes('text-sm')
-        sensor_select = ui.select(options=[], value=None).props('clearable')
+        # Permitir selección múltiple de sensores utilizando la propiedad ``multiple``. El
+        # valor será una lista de sensores seleccionados. Si no hay selección se
+        # utiliza una lista vacía.
+        sensor_select = ui.select(options=[], value=[], multiple=True).props('clearable use-chips')
         status = ui.label('Buscando sensores...').classes('text-sm')
 
     def refresh_sensors() -> None:
@@ -38,16 +41,26 @@ def page_index() -> None:
             opts = sorted(state.available_sensors)
         sensor_select.options = opts
         sensor_select.update()
-        status.text = f'Sensores detectados: {len(opts)}'
+        if len(opts) == 0:
+            status.text = 'No se detectaron sensores, Buscando sensores...'
+        else:
+            status.text = f'Sensores detectados: {len(opts)}'
 
     ui.timer(0.5, refresh_sensors)
 
     def open_dashboard() -> None:
-        s = sensor_select.value
-        if not s:
-            ui.notify('Selecciona un sensor', type='negative')
+        selected = sensor_select.value or []
+        # Convertir a lista si se selecciona un solo sensor como cadena
+        if isinstance(selected, str):
+            selected_list = [selected]
+        else:
+            selected_list = list(selected)
+        if not selected_list:
+            ui.notify('Selecciona al menos un sensor', type='negative')
             return
-        mqtt_handler.set_current_sensor(str(s))
-        ui.navigate.to(f'/dashboard/{s}')
+        # Preparar cadena para la URL separada por comas
+        sensors_str = ','.join(selected_list)
+        mqtt_handler.set_current_sensors(selected_list)
+        ui.navigate.to(f'/dashboard/{sensors_str}')
 
     ui.button('Abrir dashboard', on_click=open_dashboard).props('color=primary')

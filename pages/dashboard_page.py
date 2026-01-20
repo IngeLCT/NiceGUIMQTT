@@ -55,19 +55,65 @@ def create_figure(metric: Dict[str, Any]) -> go.Figure:
     return fig
 
 
-@ui.page('/dashboard/{sensor}')
-def page_dashboard(sensor: str) -> None:
-    # Asegura que el cliente de medicion este suscrito al sensor seleccionado
-    mqtt_handler.set_current_sensor(sensor)
-
-    metric_defs: List[Dict[str, Any]] = sensor_config.get_metrics(sensor)
-    if not metric_defs:
+@ui.page('/dashboard/{sensors}')
+def page_dashboard(sensors: str) -> None:
+    """
+    Pagina de dashboard para uno o más sensores. El parámetro ``sensors`` puede ser un
+    nombre de sensor o varios nombres separados por coma. Se suscribe a todos los
+    sensores especificados y permite seleccionar qué canales (métricas) se
+    visualizarán para cada sensor mediante una ventana de configuración.
+    """
+    # Analizar la lista de sensores (separados por comas)
+    sensor_names: list[str] = [s for s in (sensors.split(',') if sensors else []) if s]
+    if not sensor_names:
         ui.button('⟵ Volver', on_click=lambda: ui.navigate.to('/')).props('flat color=primary')
-        ui.label(f'No hay configuración de métricas para: {sensor}').classes('text-xl font-bold')
-        ui.label('Agrega este sensor/tipo a sensor_config.py para poder ver gráficas.').classes('text-sm text-gray-600')
+        ui.label('No se especificó ningún sensor').classes('text-xl font-bold')
         return
 
-    metric_ids = [m['id'] for m in metric_defs]
+    # Asegura que el cliente de medicion este suscrito a los sensores seleccionados
+    mqtt_handler.set_current_sensors(sensor_names)
+
+    # Construir lista completa de métricas para todos los sensores. Prefija
+    # cada identificador con el nombre del sensor y actualiza la etiqueta con el
+    # sensor para diferenciar en la interfaz.
+    full_metric_defs: List[Dict[str, Any]] = []
+    for sname in sensor_names:
+        metrics = sensor_config.get_metrics(sname)
+        # Filtrar según canales seleccionados para este sensor (si aplica)
+        selected = state.selected_channel_map.get(sname)
+        for m in metrics:
+            if selected is not None and m['id'] not in selected:
+                continue
+            nm = dict(m)
+            nm['id'] = f'{sname}:{m["id"]}'
+            # Ajustar etiqueta para incluir el sensor
+            nm['label'] = f'{sname} - {m.get("label", m["id"])}'
+            full_metric_defs.append(nm)
+
+    if not full_metric_defs:
+        ui.button('⟵ Volver', on_click=lambda: ui.navigate.to('/')).props('flat color=primary')
+        ui.label('No hay configuración de métricas para los sensores seleccionados').classes('text-xl font-bold')
+        ui.label('Agrega estos sensores/tipos a sensor_config.py para poder ver gráficas.').classes('text-sm text-gray-600')
+        return
+
+    # Utiliza la lista de métricas activas desde el estado global. Si no hay
+    # configuración previa, se considerarn todas las métricas definidas arriba.
+    with state.data_lock:
+        if state.current_metric_ids:
+            selected_metric_ids = list(state.current_metric_ids)
+        else:
+            selected_metric_ids = [m['id'] for m in full_metric_defs]
+            # Actualizar buffers para estas métricas iniciales
+            state.ensure_metric_buffers(selected_metric_ids)
+
+    # metric_ids es una lista local que referencia a las métricas activas. Se
+    # actualizará cuando el usuario cambie la selección de canales.
+    metric_ids = list(selected_metric_ids)
+
+    # Copia local de la definición completa de métricas. Utilice esta lista
+    # para iterar sobre todas las métricas disponibles (aunque algunas puedan
+    # estar ocultas). La lista ``metric_ids`` define las métricas visibles.
+    metric_defs = list(full_metric_defs)
 
     # Figuras y plots (dinámicos)
     figures: Dict[str, go.Figure] = {m['id']: create_figure(m) for m in metric_defs}
@@ -116,12 +162,14 @@ def page_dashboard(sensor: str) -> None:
             state.measurement_sample_index = 0
             state.measurement_elapsed_s = 0.0
 
-        # limpiar figuras
-        for mid in metric_ids:
-            fig = figures[mid]
-            fig.data[0].x = []
-            fig.data[0].y = []
-            fig.update_layout(yaxis={'autorange': True})
+        # limpiar figuras de todas las métricas definidas (no solo las activas)
+        for m in metric_defs:
+            midp = m['id']
+            fig = figures.get(midp)
+            if fig is not None:
+                fig.data[0].x = []
+                fig.data[0].y = []
+                fig.update_layout(yaxis={'autorange': True})
 
         # etiquetas
         if t_label is not None:
@@ -314,17 +362,22 @@ def page_dashboard(sensor: str) -> None:
         if state.display_series_index is None and x:
             x_max = x[-1]
             x_min = max(0.0, x_max - state.WINDOW_S)
-            for mid in metric_ids:
-                figures[mid].update_layout(
-                    xaxis={'range': [x_min, x_max], 'showgrid': True},
-                    yaxis={'autorange': True, 'showgrid': True},
-                )
+            # Actualizar rango X para todas las figuras (activas e inactivas)
+            for m in metric_defs:
+                midp = m['id']
+                if midp in figures:
+                    figures[midp].update_layout(
+                        xaxis={'range': [x_min, x_max], 'showgrid': True},
+                        yaxis={'autorange': True, 'showgrid': True},
+                    )
         else:
-            for mid in metric_ids:
-                figures[mid].update_layout(
-                    xaxis={'showgrid': True},
-                    yaxis={'autorange': True, 'showgrid': True},
-                )
+            for m in metric_defs:
+                midp = m['id']
+                if midp in figures:
+                    figures[midp].update_layout(
+                        xaxis={'showgrid': True},
+                        yaxis={'autorange': True, 'showgrid': True},
+                    )
 
         for p in plots.values():
             p.update()
@@ -338,15 +391,21 @@ def page_dashboard(sensor: str) -> None:
     # =========================
 
     ui.button('⟵ Volver', on_click=lambda: ui.navigate.to('/')).props('flat color=primary')
-    ui.label(f'Dashboard - Sensor: {sensor}').classes('text-2xl font-bold')
+    # Encabezado que muestra los sensores seleccionados
+    ui.label(f"Dashboard - Sensores: {', '.join(sensor_names)}").classes('text-2xl font-bold')
 
     with ui.row().classes('w-full items-center gap-6'):
         t_label = ui.label('t_s: --').classes('text-lg font-bold')
         for m in metric_defs:
-            metric_labels[m['id']] = ui.label(f"{m['label']}: -- {m.get('unit','')}".strip()).classes('text-lg font-bold')
+            midp = m['id']
+            lbl = ui.label(f"{m['label']}: -- {m.get('unit','')}".strip()).classes('text-lg font-bold')
+            # Ocultar etiqueta si no está seleccionada
+            if midp not in metric_ids:
+                lbl.style('display: none')
+            metric_labels[midp] = lbl
         dropped_label = ui.label('avg_dropped: --').classes('text-lg font-bold')
 
-    # Dialogo configuracion de tiempo
+    # Dialogo configuración de tiempo
     with ui.dialog() as config_dialog, ui.card():
         ui.label('Configurar duración de la medición').classes('text-lg font-bold')
         duration_input = ui.number(label='Duración (0 = sin límite)', value=1, min=0, precision=0)
@@ -358,9 +417,67 @@ def page_dashboard(sensor: str) -> None:
             ).props('color=primary')
             ui.button('Cancelar', on_click=config_dialog.close).props('color=negative')
 
+    # Dialogo configuración de sensores/canales
+    # Permite al usuario activar o desactivar canales (métricas) para cada sensor.
+    with ui.dialog() as channel_dialog, ui.card():
+        ui.label('Selecciona los canales que deseas visualizar').classes('text-lg font-bold')
+        # Diccionario de checkboxes para cada métrica prefijada por sensor
+        channel_checks: Dict[str, Any] = {}
+        # Construir lista de opciones por sensor
+        for sname in sensor_names:
+            ui.label(f'Sensor {sname}').classes('text-md font-bold')
+            metrics = sensor_config.get_metrics(sname)
+            with state.data_lock:
+                selected_set = state.selected_channel_map.get(sname)
+            for m in metrics:
+                mid_pref = f'{sname}:{m["id"]}'
+                # Determinar estado inicial: seleccionado si no hay mapa o si el canal está en selected_set
+                initial = True if (selected_set is None or m['id'] in selected_set) else False
+                channel_checks[mid_pref] = ui.checkbox(m['label'], value=initial)
+        with ui.row().classes('gap-2'):
+            def apply_channel_selection() -> None:
+                # Construir mapa sensor->set de canales seleccionados (sin prefijo)
+                new_map: Dict[str, set[str]] = {}
+                for pref_mid, chk in channel_checks.items():
+                    sens, orig_mid = pref_mid.split(':', 1)
+                    if chk.value:
+                        new_map.setdefault(sens, set()).add(orig_mid)
+                # Validar que cada sensor tenga al menos un canal seleccionado
+                for sname in sensor_names:
+                    if sname not in new_map or not new_map[sname]:
+                        ui.notify(f'Debes seleccionar al menos un canal para {sname}', type='negative')
+                        return
+                # Actualizar el mapa global de canales seleccionados
+                with state.data_lock:
+                    state.selected_channel_map = new_map
+                # Construir la nueva lista de métricas prefijadas activas
+                new_metric_ids = []
+                for sname, mids in new_map.items():
+                    for mid in mids:
+                        new_metric_ids.append(f'{sname}:{mid}')
+                # Actualizar buffers y métricas activas
+                state.ensure_metric_buffers(new_metric_ids)
+                metric_ids[:] = list(new_metric_ids)
+                # Mostrar u ocultar gráficas y etiquetas según la selección
+                for m in metric_defs:
+                    midp = m['id']
+                    visible = midp in metric_ids
+                    if midp in plots:
+                        plots[midp].style(f'display: {"block" if visible else "none"}')
+                    lbl = metric_labels.get(midp)
+                    if lbl is not None:
+                        lbl.style(f'display: {"block" if visible else "none"}')
+                update_plots()
+                channel_dialog.close()
+
+            ui.button('Aceptar', on_click=apply_channel_selection).props('color=primary')
+            ui.button('Cancelar', on_click=channel_dialog.close).props('color=negative')
+
     # Barra de controles
     with ui.row().classes('gap-2'):
         ui.button('Configurar tiempo', on_click=config_dialog.open).props('color=primary')
+        # Botón para configurar sensores/canales
+        ui.button('Configurar sensores', on_click=channel_dialog.open).props('color=primary')
         ui.button('Iniciar', on_click=start_measurement).props('color=positive')
         ui.button('Detener', on_click=stop_measurement).props('color=negative')
         ui.button('Guardar serie', on_click=save_series).style('background-color:#cccc00 !important; color:#000000 !important')
@@ -380,7 +497,11 @@ def page_dashboard(sensor: str) -> None:
     # Gráficas dinámicas
     for m in metric_defs:
         mid = m['id']
-        plots[mid] = ui.plotly(figures[mid]).classes('w-full h-72')
+        # Mostrar u ocultar según la selección inicial
+        visible = mid in metric_ids
+        p = ui.plotly(figures[mid]).classes('w-full h-72')
+        p.style(f'display: {"block" if visible else "none"}')
+        plots[mid] = p
 
     # Tabla
     ui.separator()
