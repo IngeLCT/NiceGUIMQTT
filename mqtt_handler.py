@@ -242,17 +242,37 @@ def set_current_sensors(sensors: list[str]) -> None:
     if set(prev_sensors) != set(sensors_unique):
         state.reset_all_state()
 
-    # Construir mapa de topicos
+    # Construir mapa de tópicos y determinar canales activos por sensor.
+    # Si el usuario aún no ha configurado canales para un sensor, tomamos los
+    # canales marcados como Default/default en sensor_config.py.
     new_topics: dict[str, str] = {}
     metric_ids_prefixed: list[str] = []
+
+    # Copia del mapa actual para no pisar selecciones previas
+    with state.data_lock:
+        channel_map = dict(state.selected_channel_map)
+
     for sensor_name in sensors_unique:
         topic = f'{state.EQ_PREFIX}/{sensor_name}/data'
         new_topics[sensor_name] = topic
-        # Obtener métricas de este sensor y prefijar con el nombre del sensor
-        for mid in sensor_config.get_metric_ids(sensor_name):
-            metric_ids_prefixed.append(f'{sensor_name}:{mid}')
 
-    # Preparar buffers dinámicos
+        # Obtener/setear canales por defecto si no hay selección guardada
+        if sensor_name not in channel_map:
+            defaults = sensor_config.get_default_metric_ids(sensor_name)
+            if not defaults:
+                # fallback: si el perfil no tiene defaults, habilitar todo
+                defaults = sensor_config.get_metric_ids(sensor_name)
+            channel_map[sensor_name] = set(defaults)
+
+        # Construir lista de métricas activas prefijadas para buffers/UI,
+        # respetando el orden definido en sensor_config.py
+        ordered_mids = sensor_config.get_metric_ids(sensor_name)
+        chset = channel_map[sensor_name]
+        for mid in ordered_mids:
+            if mid in chset:
+                metric_ids_prefixed.append(f'{sensor_name}:{mid}')
+
+    # Preparar buffers dinámicos SOLO para métricas activas
     state.ensure_metric_buffers(metric_ids_prefixed)
 
     # Actualizar variables de estado
@@ -260,6 +280,8 @@ def set_current_sensors(sensors: list[str]) -> None:
         old_topics = dict(state.current_topics)
         state.selected_sensors = list(sensors_unique)
         state.current_topics = dict(new_topics)
+        # Guardar mapa de canales (incluyendo defaults autogenerados)
+        state.selected_channel_map = dict(channel_map)
 
         # Mantener compatibilidad: usar el primer sensor para selected_sensor/current_topic
         if sensors_unique:

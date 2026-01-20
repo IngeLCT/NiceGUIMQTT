@@ -392,7 +392,11 @@ def page_dashboard(sensors: str) -> None:
 
     ui.button('⟵ Volver', on_click=lambda: ui.navigate.to('/')).props('flat color=primary')
     # Encabezado que muestra los sensores seleccionados
-    ui.label(f"Dashboard - Sensores: {', '.join(sensor_names)}").classes('text-2xl font-bold')
+    display_names = {s: sensor_config.get_sensor_display_name(s) for s in sensor_names}
+
+    ui.label(
+        f"Dashboard - Sensores: {', '.join([display_names.get(s, s) for s in sensor_names])}"
+    ).classes('text-2xl font-bold')
 
     with ui.row().classes('w-full items-center gap-6'):
         t_label = ui.label('t_s: --').classes('text-lg font-bold')
@@ -431,8 +435,12 @@ def page_dashboard(sensors: str) -> None:
                 selected_set = state.selected_channel_map.get(sname)
             for m in metrics:
                 mid_pref = f'{sname}:{m["id"]}'
-                # Determinar estado inicial: seleccionado si no hay mapa o si el canal está en selected_set
-                initial = True if (selected_set is None or m['id'] in selected_set) else False
+                # Estado inicial: si ya hay selección previa, usarla; si no, usar
+                # el valor Default/default definido en sensor_config.py
+                if selected_set is not None:
+                    initial = (m['id'] in selected_set)
+                else:
+                    initial = sensor_config.is_default_metric(m)
                 channel_checks[mid_pref] = ui.checkbox(m['label'], value=initial)
         with ui.row().classes('gap-2'):
             def apply_channel_selection() -> None:
@@ -450,11 +458,14 @@ def page_dashboard(sensors: str) -> None:
                 # Actualizar el mapa global de canales seleccionados
                 with state.data_lock:
                     state.selected_channel_map = new_map
-                # Construir la nueva lista de métricas prefijadas activas
+                # Construir la nueva lista de métricas prefijadas activas respetando
+                # el orden definido en metric_defs (sensor_config.py)
                 new_metric_ids = []
-                for sname, mids in new_map.items():
-                    for mid in mids:
-                        new_metric_ids.append(f'{sname}:{mid}')
+                for m in metric_defs:
+                    midp = m['id']
+                    sens, orig_mid = midp.split(':', 1)
+                    if orig_mid in new_map.get(sens, set()):
+                        new_metric_ids.append(midp)
                 # Actualizar buffers y métricas activas
                 state.ensure_metric_buffers(new_metric_ids)
                 metric_ids[:] = list(new_metric_ids)

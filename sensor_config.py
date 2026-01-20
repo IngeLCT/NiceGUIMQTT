@@ -31,6 +31,7 @@ def sensor_type(sensor_name: str) -> str:
 
 SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     "Mov": {
+        "Name": "Sensor de Movimiento",
         "required_keys": ["t_ms", "cm", "v_cm_s", "a_cm_s2"],
         "metrics": [
             {
@@ -41,6 +42,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m",
                 "color": "#1f77b4",
                 "hover_name": "Distancia",
+                "Default": True,
             },
             {
                 "id": "vel_m_s",
@@ -50,6 +52,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s",
                 "color": "#2ca02c",
                 "hover_name": "Velocidad",
+                "Default": False,
             },
             {
                 "id": "acc_m_s2",
@@ -59,12 +62,14 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s²",
                 "color": "#ff0000",
                 "hover_name": "Aceleracion",
+                "Default": False,
             },
         ],
-        "avg_dropped_key": "avg_dropped",  # indicador opcional
+        "avg_dropped_key": None,  # indicador opcional
     },
 
     "Gyro": {
+        "Name": "Sensor Giroscopio y Aceleracion",
         # claves mínimas esperadas (si falta una, se ignora el mensaje)
         "required_keys": ["t_ms", "temp_c", "ax", "ay", "az", "gx", "gy", "gz"],
 
@@ -77,7 +82,9 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "label": "Temperatura",
                 "unit": "°C",
                 "color": "#ff7f0e",
+                "Default": True,
                 "hover_name": "Temperatura",
+
             },
 
             # Aceleración (unidades: depende de tu IMU; común: m/s² o g)
@@ -90,6 +97,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "label": "Aceleracion X",
                 "unit": "m/s²",
                 "color": "#1f77b4",
+                "Default": True,
                 "hover_name": "Ax",
             },
             {
@@ -99,6 +107,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "label": "Aceleracion Y",
                 "unit": "m/s²",
                 "color": "#2ca02c",
+                "Default": False,
                 "hover_name": "Ay",
             },
             {
@@ -109,6 +118,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s²",
                 "color": "#d62728",
                 "hover_name": "Az",
+                "Default": False,
             },
 
             # Giro (unidades: común: deg/s o rad/s)
@@ -121,6 +131,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "rad/s",
                 "color": "#9467bd",
                 "hover_name": "Gx",
+                "Default": False,
             },
             {
                 "id": "gy",
@@ -130,6 +141,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "rad/s",
                 "color": "#8c564b",
                 "hover_name": "Gy",
+                "Default": False,
             },
             {
                 "id": "gz",
@@ -139,6 +151,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "rad/s",
                 "color": "#e377c2",
                 "hover_name": "Gz",
+                "Default": False,
             },
         ],
 
@@ -186,5 +199,32 @@ def get_metrics(sensor_name: str) -> List[Dict[str, Any]]:
     return list(get_profile(sensor_name).get("metrics", []))
 
 
+def is_default_metric(metric: Dict[str, Any]) -> bool:
+    """Indica si una métrica debe iniciar habilitada.
+
+    Acepta la clave "Default" (como la pides) y también "default".
+    Si no existe ninguna de las dos, se asume True (compatibilidad).
+    """
+    if "Default" in metric:
+        return bool(metric.get("Default"))
+    return bool(metric.get("default", True))
+
+
+def get_default_metrics(sensor_name: str) -> List[Dict[str, Any]]:
+    """Métricas que inician habilitadas según Default/default."""
+    return [m for m in get_metrics(sensor_name) if is_default_metric(m)]
+
+
+def get_default_metric_ids(sensor_name: str) -> List[str]:
+    """IDs de métricas habilitadas por defecto."""
+    return [m["id"] for m in get_default_metrics(sensor_name)]
+
+
 def get_metric_ids(sensor_name: str) -> List[str]:
     return [m["id"] for m in get_metrics(sensor_name)]
+
+def get_sensor_display_name(sensor_name: str) -> str:
+    """Nombre amigable para mostrar en UI."""
+    prof = get_profile(sensor_name)
+    name = prof.get('Name') or prof.get('name')
+    return str(name) if name else sensor_name

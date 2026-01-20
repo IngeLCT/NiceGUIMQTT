@@ -28,33 +28,57 @@ def page_index() -> None:
         'Se detectan automáticamente los sensores en EQ1/; puedes seleccionar y abrir el dashboard.'
     ).classes('text-sm text-gray-600')
 
+    # NOTE (NiceGUI 3.5.0):
+    # ``ui.select(multiple=True)`` puede lanzar el error
+    # "list indices must be integers or slices, not str" en algunos entornos
+    # (proviene del manejo interno de eventos del select).
+    # Para hacerlo 100% estable, usamos una lista de checkboxes.
+    selected_sensors: set[str] = set()
+
     with ui.row().classes('w-full items-center gap-4'):
         ui.label('Sensores').classes('text-sm')
-        # Permitir selección múltiple de sensores utilizando la propiedad ``multiple``. El
-        # valor será una lista de sensores seleccionados. Si no hay selección se
-        # utiliza una lista vacía.
-        sensor_select = ui.select(options=[], value=[], multiple=True).props('clearable use-chips')
         status = ui.label('Buscando sensores...').classes('text-sm')
 
-    def refresh_sensors() -> None:
+    @ui.refreshable
+    def sensor_checklist() -> None:
         with state.sensor_lock:
             opts = sorted(state.available_sensors)
-        sensor_select.options = opts
-        sensor_select.update()
-        if len(opts) == 0:
-            status.text = 'No se detectaron sensores, Buscando sensores...'
-        else:
-            status.text = f'Sensores detectados: {len(opts)}'
 
-    ui.timer(0.5, refresh_sensors)
+        if not opts:
+            status.text = 'No se detectaron sensores, Buscando sensores...'
+            ui.label('Buscando sensores...').classes('text-sm text-gray-600')
+            return
+
+        status.text = f'Sensores detectados: {len(opts)}'
+        with ui.card().classes('w-full max-w-2xl'):
+            with ui.column().classes('max-h-72 overflow-auto gap-1'):
+                for s in opts:
+                    def _on_change(e, name=s) -> None:
+                        if e.value:
+                            selected_sensors.add(name)
+                        else:
+                            selected_sensors.discard(name)
+
+                    ui.checkbox(s, value=(s in selected_sensors), on_change=_on_change)
+
+    sensor_checklist()
+    ui.timer(0.5, sensor_checklist.refresh)
+
+    def select_all() -> None:
+        with state.sensor_lock:
+            selected_sensors.update(state.available_sensors)
+        sensor_checklist.refresh()
+
+    def clear_selection() -> None:
+        selected_sensors.clear()
+        sensor_checklist.refresh()
+
+    with ui.row().classes('gap-2'):
+        ui.button('Seleccionar todo', on_click=select_all).props('outline')
+        ui.button('Limpiar', on_click=clear_selection).props('outline')
 
     def open_dashboard() -> None:
-        selected = sensor_select.value or []
-        # Convertir a lista si se selecciona un solo sensor como cadena
-        if isinstance(selected, str):
-            selected_list = [selected]
-        else:
-            selected_list = list(selected)
+        selected_list = sorted(selected_sensors)
         if not selected_list:
             ui.notify('Selecciona al menos un sensor', type='negative')
             return
