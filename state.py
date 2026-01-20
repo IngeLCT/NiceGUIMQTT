@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from typing import Any, Optional
 
@@ -47,6 +48,12 @@ sensor_lock = threading.Lock()
 
 # Sensores detectados en EQ1/#
 available_sensors: set[str] = set()
+
+# Última vez que se vio cada sensor (time.time())
+sensor_last_seen: dict[str, float] = {}
+
+# Si un sensor no publica por más de este tiempo (s), se considera desconectado
+SENSOR_STALE_S = 5.0
 
 # Sensor seleccionado y topico actual
 selected_sensor: Optional[str] = None

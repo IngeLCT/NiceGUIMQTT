@@ -80,10 +80,10 @@ def page_dashboard(sensors: str) -> None:
     for sname in sensor_names:
         metrics = sensor_config.get_metrics(sname)
         # Filtrar según canales seleccionados para este sensor (si aplica)
-        selected = state.selected_channel_map.get(sname)
+        #selected = state.selected_channel_map.get(sname)
         for m in metrics:
-            if selected is not None and m['id'] not in selected:
-                continue
+            #if selected is not None and m['id'] not in selected:
+            #    continue
             nm = dict(m)
             nm['id'] = f'{sname}:{m["id"]}'
             # Ajustar etiqueta para incluir el sensor
@@ -114,6 +114,7 @@ def page_dashboard(sensors: str) -> None:
     # para iterar sobre todas las métricas disponibles (aunque algunas puedan
     # estar ocultas). La lista ``metric_ids`` define las métricas visibles.
     metric_defs = list(full_metric_defs)
+    metric_def_by_id = {m['id']: m for m in metric_defs}
 
     # Figuras y plots (dinámicos)
     figures: Dict[str, go.Figure] = {m['id']: create_figure(m) for m in metric_defs}
@@ -182,7 +183,7 @@ def page_dashboard(sensors: str) -> None:
                 lbl.text = f"{m['label']}: -- {m.get('unit','')}".strip()
 
         if dropped_label is not None:
-            dropped_label.text = 'avg_dropped: --'
+            dropped_label.text = ' '
 
         # tabla
         if series_table is not None:
@@ -350,6 +351,8 @@ def page_dashboard(sensors: str) -> None:
 
         if dropped_label is not None:
             dropped_label.text = f"avg_dropped: {lavg if (show_avg and lavg is not None) else '--'}"
+            if lavg is None:
+                dropped_label.text = ' '
 
         # Figuras
         for m in metric_defs:
@@ -425,8 +428,13 @@ def page_dashboard(sensors: str) -> None:
     # Permite al usuario activar o desactivar canales (métricas) para cada sensor.
     with ui.dialog() as channel_dialog, ui.card():
         ui.label('Selecciona los canales que deseas visualizar').classes('text-lg font-bold')
+        MAX_CHANNELS_GLOBAL = 3
+        ui.label(f'Máximo {MAX_CHANNELS_GLOBAL} canales en total (entre todos los sensores)').classes('text-sm text-gray-600')
         # Diccionario de checkboxes para cada métrica prefijada por sensor
         channel_checks: Dict[str, Any] = {}
+        # Para no abrir el diálogo con >MAX seleccionados (por defaults), capamos la
+        # preselección en el orden en que se dibujan los checks.
+        preselected = 0
         # Construir lista de opciones por sensor
         for sname in sensor_names:
             ui.label(f'Sensor {sname}').classes('text-md font-bold')
@@ -441,7 +449,31 @@ def page_dashboard(sensors: str) -> None:
                     initial = (m['id'] in selected_set)
                 else:
                     initial = sensor_config.is_default_metric(m)
-                channel_checks[mid_pref] = ui.checkbox(m['label'], value=initial)
+
+                # Cap global de preselección
+                if initial:
+                    if preselected >= MAX_CHANNELS_GLOBAL:
+                        initial = False
+                    else:
+                        preselected += 1
+                def _limit_change(e) -> None:
+                    # Límite GLOBAL: si intenta activar más de MAX, se revierte el último
+                    if not e.value:
+                        return
+                    total_selected = sum(1 for cb in channel_checks.values() if cb.value)
+                    if total_selected > MAX_CHANNELS_GLOBAL:
+                        try:
+                            e.sender.value = False
+                            e.sender.update()
+                        except Exception:
+                            pass
+                        ui.notify(
+                            f'Máximo {MAX_CHANNELS_GLOBAL} canales en total',
+                            type='warning',
+                        )
+
+                cb = ui.checkbox(m['label'], value=initial, on_change=_limit_change)
+                channel_checks[mid_pref] = cb
         with ui.row().classes('gap-2'):
             def apply_channel_selection() -> None:
                 # Construir mapa sensor->set de canales seleccionados (sin prefijo)
@@ -450,11 +482,18 @@ def page_dashboard(sensors: str) -> None:
                     sens, orig_mid = pref_mid.split(':', 1)
                     if chk.value:
                         new_map.setdefault(sens, set()).add(orig_mid)
-                # Validar que cada sensor tenga al menos un canal seleccionado
-                for sname in sensor_names:
-                    if sname not in new_map or not new_map[sname]:
-                        ui.notify(f'Debes seleccionar al menos un canal para {sname}', type='negative')
-                        return
+
+                # Validar límite GLOBAL
+                total_selected = sum(len(mids) for mids in new_map.values())
+                if total_selected > MAX_CHANNELS_GLOBAL:
+                    ui.notify(
+                        f'Máximo {MAX_CHANNELS_GLOBAL} canales en total (seleccionaste {total_selected}).',
+                        type='negative',
+                    )
+                    return
+                if total_selected == 0:
+                    ui.notify('Debes seleccionar al menos un canal.', type='negative')
+                    return
                 # Actualizar el mapa global de canales seleccionados
                 with state.data_lock:
                     state.selected_channel_map = new_map
@@ -479,16 +518,17 @@ def page_dashboard(sensors: str) -> None:
                     if lbl is not None:
                         lbl.style(f'display: {"block" if visible else "none"}')
                 update_plots()
+                # Actualizar columnas de la tabla para que solo muestre canales activos
+                _set_table_columns()
                 channel_dialog.close()
 
             ui.button('Aceptar', on_click=apply_channel_selection).props('color=primary')
             ui.button('Cancelar', on_click=channel_dialog.close).props('color=negative')
-
     # Barra de controles
     with ui.row().classes('gap-2'):
         ui.button('Configurar tiempo', on_click=config_dialog.open).props('color=primary')
         # Botón para configurar sensores/canales
-        ui.button('Configurar sensores', on_click=channel_dialog.open).props('color=primary')
+        ui.button('Configurar sensores', on_click=channel_dialog.open).style('background-color:#663300 !important; color:#ffffff !important')
         ui.button('Iniciar', on_click=start_measurement).props('color=positive')
         ui.button('Detener', on_click=stop_measurement).props('color=negative')
         ui.button('Guardar serie', on_click=save_series).style('background-color:#cccc00 !important; color:#000000 !important')
@@ -519,13 +559,20 @@ def page_dashboard(sensors: str) -> None:
     ui.label('Tabla de datos').classes('text-lg font-bold')
     ui.label('Muestra los puntos visibles (en vivo o de la serie seleccionada).').classes('text-sm text-gray-600')
 
-    columns = [{'name': 't_s', 'label': 't_s (s)', 'field': 't_s', 'align': 'left'}]
-    for m in metric_defs:
-        mid = m['id']
-        unit = m.get('unit', '')
-        columns.append({'name': mid, 'label': f"{m['label']} ({unit})".strip(), 'field': mid, 'align': 'left'})
+    # Tabla: columnas dinámicas según los canales activos (metric_ids)
+    def _set_table_columns() -> None:
+        if series_table is None:
+            return
+        cols = [{'name': 't_s', 'label': 't_s (s)', 'field': 't_s', 'align': 'left'}]
+        for mid in metric_ids:
+            m = metric_def_by_id.get(mid, {'label': mid})
+            unit = m.get('unit', '')
+            cols.append({'name': mid, 'label': f"{m.get('label', mid)} ({unit})".strip(), 'field': mid, 'align': 'left'})
+        series_table.columns = cols
+        series_table.update()
 
-    series_table = ui.table(columns=columns, rows=[], row_key='t_s').classes('w-full')
+    series_table = ui.table(columns=[], rows=[], row_key='t_s').classes('w-full')
+    _set_table_columns()
 
     ui.timer(state.REFRESH_S, update_plots)
     update_plots()

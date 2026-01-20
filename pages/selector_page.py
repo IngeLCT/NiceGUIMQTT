@@ -14,6 +14,8 @@ decorator.
 
 from __future__ import annotations
 
+import time
+
 from nicegui import ui
 
 import mqtt_handler
@@ -23,9 +25,9 @@ import state
 @ui.page('/')
 def page_index() -> None:
     """Sensor selection page."""
-    ui.label('Selector de Sensor (EQ1/)').classes('text-2xl font-bold')
+    ui.label('Selector de Sensor EQ1/').classes('text-2xl font-bold')
     ui.label(
-        'Se detectan automáticamente los sensores en EQ1/; puedes seleccionar y abrir el dashboard.'
+        'Se detectan automáticamente los sensores de EQ1/; puedes seleccionar y abrir el dashboard.'
     ).classes('text-sm text-gray-600')
 
     # NOTE (NiceGUI 3.5.0):
@@ -41,8 +43,19 @@ def page_index() -> None:
 
     @ui.refreshable
     def sensor_checklist() -> None:
+        now = time.time()
         with state.sensor_lock:
-            opts = sorted(state.available_sensors)
+            alive: list[str] = []
+            # limpiar sensores que ya no publican
+            for s in list(state.available_sensors):
+                last = state.sensor_last_seen.get(s, 0.0)
+                if now - last <= state.SENSOR_STALE_S:
+                    alive.append(s)
+                else:
+                    state.available_sensors.discard(s)
+                    state.sensor_last_seen.pop(s, None)
+                    selected_sensors.discard(s)
+            opts = sorted(alive)
 
         if not opts:
             status.text = 'No se detectaron sensores, Buscando sensores...'

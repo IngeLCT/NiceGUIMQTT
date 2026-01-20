@@ -158,17 +158,19 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
         "avg_dropped_key": None,
     },
 
-    "Temp": {
-        "required_keys": ["t_ms", "temp_c"],
+    "Lux": {
+        "required_keys": ["t_ms", "Lux"],
+        "Name": "Sensor de Lux",
         "metrics": [
             {
-                "id": "temp_c",
-                "json_key": "temp_c",
+                "id": "Lux",
+                "json_key": "Lux",
                 "scale": 1.0,
-                "label": "Temperatura",
-                "unit": "°C",
-                "color": "#ff7f0e",
-                "hover_name": "Temperatura",
+                "label": "Lux",
+                "unit": "lux",
+                "color": "#003300",
+                "hover_name": "Lux",
+                "Default": True,
             },
         ],
         "avg_dropped_key": None,

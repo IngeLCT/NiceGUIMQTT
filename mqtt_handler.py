@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Optional
 
 import paho.mqtt.client as mqtt
@@ -58,6 +59,7 @@ def supervisor_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) 
         if sensor:
             with state.sensor_lock:
                 state.available_sensors.add(sensor)
+                state.sensor_last_seen[sensor] = time.time()
 
 
 # =========================
@@ -93,6 +95,13 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
     if len(parts) < 3 or parts[0] != state.EQ_PREFIX or parts[2] != 'data':
         return
     sensor_name = parts[1]
+
+    # Marcar sensor como visto (para el selector principal)
+    if sensor_name:
+        with state.sensor_lock:
+            state.available_sensors.add(sensor_name)
+            state.sensor_last_seen[sensor_name] = time.time()
+
     with state.data_lock:
         if sensor_name not in state.selected_sensors:
             return
