@@ -1,15 +1,13 @@
 """
-NiceGUI page for selecting a sensor.
+Página de NiceGUI para seleccionar un sensor.
 
-This page lists all discovered sensors and lets the user select
-one. When a sensor is chosen, the application navigates to the
-dashboard page. The list of available sensors is refreshed
-periodically by reading the ``available_sensors`` set from
-``state``.
+Esta página enumera todos los sensores detectados y permite al usuario
+seleccionar uno o varios(Max 3). Al seleccionar un sensor, la aplicación
+accede a la página del panel. La lista de sensores disponibles se actualiza
+periódicamente leyendo el conjunto ``available_sensors`` de ``state``.
 
-To register the page with NiceGUI, simply import this module in
-your main script. The route is defined by the ``@ui.page``
-decorator.
+Para registrar la página con NiceGUI, simplemente importe este módulo en su
+script principal. La ruta se define mediante el decorador ``@ui.page``.
 """
 
 from __future__ import annotations

@@ -1,14 +1,13 @@
 """
-Entry point for the modular MQTT dashboard application.
+Punto de entrada para la aplicación modular del panel MQTT.
 
-This script imports all the necessary components to build the
-application: the page modules, the MQTT handler and global state.
-It starts the supervisor and measurement MQTT clients and then
-launches the NiceGUI server. When adding new pages or other
-functionality, import the modules here so that the routes are
-registered with NiceGUI.
+Este script importa todos los componentes necesarios para compilar
+la aplicación: los módulos de página, el controlador MQTT y el estado global.
+Inicia los clientes MQTT de supervisión y medición y, a continuación,
+lanza el servidor NiceGUI. Al añadir nuevas páginas u otras funciones,
+importe los módulos aquí para que las rutas se registren en NiceGUI.
 
-Run this file with ``python main.py`` to start the dashboard.
+Ejecute este archivo con ``python main.py`` para iniciar el panel.
 """
 
 from __future__ import annotations

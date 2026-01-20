@@ -20,5 +20,8 @@ env/
 # OS
 .DS_Store
 Thumbs.db
-datos.csv
+
+# CSV generados por la app
 series_export.csv
+datos.csv
+*.csv
