@@ -392,7 +392,7 @@ def page_dashboard(sensors: str) -> None:
     # =========================
     # UI
     # =========================
-
+    #ui.dark_mode().auto()
     ui.button('⟵ Volver', on_click=lambda: ui.navigate.to('/')).props('flat color=primary')
     # Encabezado que muestra los sensores seleccionados
     display_names = {s: sensor_config.get_sensor_display_name(s) for s in sensor_names}
