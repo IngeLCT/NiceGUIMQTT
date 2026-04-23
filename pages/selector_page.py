@@ -56,8 +56,7 @@ def page_index() -> None:
             opts = sorted(alive)
 
         if not opts:
-            status.text = 'No se detectaron sensores, Buscando sensores...'
-            ui.label('Buscando sensores...').classes('text-sm text-gray-600')
+            status.text = ('No se detectaron sensores, Buscando sensores...')
             return
 
         status.text = f'Sensores detectados: {len(opts)}'

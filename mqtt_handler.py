@@ -110,7 +110,9 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
     try:
         payload = msg.payload.decode('utf-8', errors='ignore')
         j = json.loads(payload)
+        #print(payload)
     except Exception as e:
+        print(payload)
         print('Error al decodificar JSON:', e)
         return
 
