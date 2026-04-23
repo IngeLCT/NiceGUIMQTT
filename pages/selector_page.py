@@ -23,11 +23,10 @@ import state
 @ui.page('/')
 def page_index() -> None:
     """Sensor selection page."""
-    #ui.dark_mode().auto()
-    ui.label('Selector de Sensor EQ1/').classes('text-2xl font-bold')
+    ui.label(f'Selector de Sensor {state.EQ_PREFIX}/').classes('text-2xl font-bold')
     ui.label(
-        'Se detectan automáticamente los sensores de EQ1/; puedes seleccionar y abrir el dashboard.'
-    ).classes('text-sm')
+        f'Se detectan automáticamente los sensores de {state.EQ_PREFIX}/; puedes seleccionar y abrir el dashboard.'
+    ).classes('text-sm text-gray-600')
 
     # NOTE (NiceGUI 3.5.0):
     # ``ui.select(multiple=True)`` puede lanzar el error
