@@ -47,7 +47,7 @@ def supervisor_on_connect(client: mqtt.Client, userdata, flags, reason_code, pro
 
 
 def supervisor_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
-    # Descubrimiento: EQ1/<sensor>/data
+    # Descubrimiento: EQn/<sensor>/data
     try:
         topic = msg.topic or ''
     except Exception:

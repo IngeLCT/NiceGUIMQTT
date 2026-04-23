@@ -1,20 +1,29 @@
 # sensor_config.py
-# Configuración dinámica por tipo de sensor (Sensor<Tipo>)
+# Configuración dinámica por tipo/base de sensor (Sensor<Tipo> o <Magnitud>n)
 
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 
 def sensor_type(sensor_name: str) -> str:
+    """Extrae el tipo/base del sensor soportando convenciones antigua y nueva.
+
+    Convenciones soportadas:
+      SensorMov     -> Mov
+      Movimiento1   -> Movimiento
+      SensorTemp2   -> Temp
     """
-    Extrae el tipo desde el nombre 'Sensor<Tipo>'.
-    Ej:
-      SensorMov  -> Mov
-      SensorTemp -> Temp
-    """
-    if sensor_name.startswith('Sensor') and len(sensor_name) > len('Sensor'):
-        return sensor_name[len('Sensor'):]
-    return sensor_name
+    name = sensor_name or ''
+
+    # Compatibilidad con la convención anterior: Sensor<Tipo>
+    if name.startswith('Sensor') and len(name) > len('Sensor'):
+        name = name[len('Sensor'):]
+
+    # Nueva convención: <Magnitud>n (se elimina solo el sufijo numérico)
+    while name and name[-1].isdigit():
+        name = name[:-1]
+
+    return name or sensor_name
 
 
 # -------------------------
@@ -66,6 +75,45 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
             },
         ],
         "avg_dropped_key": None,  # indicador opcional
+    },
+
+    # Alias para convención nueva: Movimiento1/Movimiento2/... -> tipo "Movimiento"
+    "Movimiento": {
+        "Name": "Sensor de Movimiento",
+        "required_keys": ["t_ms", "cm", "v_cm_s", "a_cm_s2"],
+        "metrics": [
+            {
+                "id": "dist_m",
+                "json_key": "cm",
+                "scale": 0.01,
+                "label": "Distancia",
+                "unit": "m",
+                "color": "#1f77b4",
+                "hover_name": "Distancia",
+                "Default": True,
+            },
+            {
+                "id": "vel_m_s",
+                "json_key": "v_cm_s",
+                "scale": 0.01,
+                "label": "Velocidad",
+                "unit": "m/s",
+                "color": "#2ca02c",
+                "hover_name": "Velocidad",
+                "Default": False,
+            },
+            {
+                "id": "acc_m_s2",
+                "json_key": "a_cm_s2",
+                "scale": 0.01,
+                "label": "Aceleracion",
+                "unit": "m/s²",
+                "color": "#ff0000",
+                "hover_name": "Aceleracion",
+                "Default": False,
+            },
+        ],
+        "avg_dropped_key": None,
     },
 
     "Gyro": {
@@ -188,7 +236,7 @@ DEFAULT_TYPE_PROFILE: Optional[Dict[str, Any]] = {
 def get_profile(sensor_name: str) -> Dict[str, Any]:
     """
     Devuelve el perfil para un sensor.
-    Busca por tipo extraído de Sensor<Tipo>. Si no existe, usa DEFAULT_TYPE_PROFILE.
+    Busca por tipo/base extraído de Sensor<Tipo> o <Magnitud>n. Si no existe, usa DEFAULT_TYPE_PROFILE.
     """
     t = sensor_type(sensor_name)
     return SENSOR_TYPES.get(

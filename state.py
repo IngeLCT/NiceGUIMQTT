@@ -15,8 +15,8 @@ MQTT_PORT = 1883
 MQTT_USER = 'eq1'
 MQTT_PASS = 'LCT17773180940'
 
-# Credenciales del usuario supervisor (acceso a EQ1/#)
-SUPERVISOR_USER = 'supervisor'
+# Credenciales del usuario de discovery/supervision (acceso a EQn/#)
+SUPERVISOR_USER = 'Profesor'
 SUPERVISOR_PASS = '7773180940'
 
 EQ_PREFIX = 'EQ1'
@@ -46,7 +46,7 @@ CSV_EXPORT_FILE = 'series_export.csv'
 data_lock = threading.Lock()
 sensor_lock = threading.Lock()
 
-# Sensores detectados en EQ1/#
+# Sensores detectados en EQn/#
 available_sensors: set[str] = set()
 
 # Última vez que se vio cada sensor (time.time())
