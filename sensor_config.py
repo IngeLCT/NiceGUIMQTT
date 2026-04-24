@@ -41,18 +41,11 @@ def sensor_type(sensor_name: str) -> str:
 SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     "Mov": {
         "Name": "Sensor de Movimiento",
-        # Formato binario MB1000 (LV-MaxSonar-EZ):
-        #   struct '<4i' (little-endian, 4 enteros con signo de 32 bits)
-        #   orden: tiempo, distancia, velocidad, aceleracion
-        #   escala común: 0.01 -> valor_real = valor_entero / 100.0
-        # Este patrón permite extender a nuevos sensores declarando:
-        #   - payload_format
-        #   - binary_struct_format
-        #   - binary_fields (orden exacto en payload)
-        "payload_format": "mb1000_bin_v1",
-        "binary_struct_format": "<4i",
+        # Frame binario con header: ACK, total_bytes, sensor_id.
+        # sensor_id 0x01 se decodifica como MB1000 en mqtt_handler.py.
+        "payload_format": "sensor_id_frame_v1",
+        "sensor_id": 0x01,
         "binary_fields": ["time_s", "distance_m", "velocity_m_s", "acceleration_m_s2"],
-        "binary_scale": 0.01,
         "required_keys": [],
         "metrics": [
             {
@@ -73,7 +66,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s",
                 "color": "#2ca02c",
                 "hover_name": "Velocidad",
-                "Default": False,
+                "Default": True,
             },
             {
                 "id": "acc_m_s2",
@@ -83,7 +76,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s²",
                 "color": "#ff0000",
                 "hover_name": "Aceleracion",
-                "Default": False,
+                "Default": True,
             },
         ],
         "avg_dropped_key": None,  # indicador opcional
@@ -92,10 +85,9 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     # Alias para convención nueva: Movimiento1/Movimiento2/... -> tipo "Movimiento"
     "Movimiento": {
         "Name": "Sensor de Movimiento",
-        "payload_format": "mb1000_bin_v1",
-        "binary_struct_format": "<4i",
+        "payload_format": "sensor_id_frame_v1",
+        "sensor_id": 0x01,
         "binary_fields": ["time_s", "distance_m", "velocity_m_s", "acceleration_m_s2"],
-        "binary_scale": 0.01,
         "required_keys": [],
         "metrics": [
             {
@@ -116,7 +108,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s",
                 "color": "#2ca02c",
                 "hover_name": "Velocidad",
-                "Default": False,
+                "Default": True,
             },
             {
                 "id": "acc_m_s2",
@@ -126,7 +118,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s²",
                 "color": "#ff0000",
                 "hover_name": "Aceleracion",
-                "Default": False,
+                "Default": True,
             },
         ],
         "avg_dropped_key": None,

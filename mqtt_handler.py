@@ -10,6 +10,11 @@ import paho.mqtt.client as mqtt
 import sensor_config
 import state
 
+MB1000_SENSOR_ID = 0x01
+SENSOR_FRAME_ACK = 0x06
+SENSOR_FRAME_HEADER_SIZE = 3
+MB1000_FRAME_SIZE = 13
+
 
 def _to_float(v: Any) -> Optional[float]:
     try:
@@ -34,6 +39,61 @@ def _to_int(v: Any) -> Optional[int]:
 
 def _rc_value(reason_code: Any) -> int:
     return int(getattr(reason_code, 'value', reason_code))
+
+
+def _decode_mb1000_payload(payload: bytes) -> tuple[dict[str, int], float]:
+    """Decode LV-MaxSonar-EZ MB1000 movement frame, sensor_id 0x01."""
+    if len(payload) != MB1000_FRAME_SIZE:
+        raise ValueError(f'MB1000 requiere {MB1000_FRAME_SIZE} bytes, recibidos {len(payload)}')
+
+    t_s_x100, d_m_x100, v_ms_x100, a_ms2_x100 = struct.unpack_from('<IHhh', payload, SENSOR_FRAME_HEADER_SIZE)
+    raw_data = {
+        'time_s': t_s_x100,
+        'distance_m': d_m_x100,
+        'velocity_m_s': v_ms_x100,
+        'acceleration_m_s2': a_ms2_x100,
+    }
+    return raw_data, t_s_x100 / 100.0
+
+
+SENSOR_ID_DECODERS = {
+    MB1000_SENSOR_ID: _decode_mb1000_payload,
+}
+
+
+def _decode_sensor_frame(payload: Any, sensor_name: str) -> tuple[int, dict[str, int], float] | None:
+    """Validate and decode framed binary sensor payloads by sensor_id."""
+    if not isinstance(payload, bytes):
+        print(f'[MEAS] Payload binario invalido para {sensor_name}: tipo {type(payload).__name__}, esperado bytes')
+        return None
+
+    if len(payload) < SENSOR_FRAME_HEADER_SIZE:
+        print(f'[MEAS] Payload binario incompleto para {sensor_name}: {len(payload)} bytes, falta header de {SENSOR_FRAME_HEADER_SIZE}')
+        return None
+
+    ack, total_bytes, sensor_id = struct.unpack_from('<BBB', payload, 0)
+
+    if len(payload) != total_bytes:
+        status = 'incompleto' if len(payload) < total_bytes else 'con bytes extra'
+        print(f'[MEAS] Payload binario {status} para {sensor_name}: {len(payload)} bytes (total_bytes={total_bytes}, sensor_id=0x{sensor_id:02X})')
+        return None
+
+    if ack != SENSOR_FRAME_ACK:
+        print(f'[MEAS] ACK invalido para {sensor_name}: 0x{ack:02X} (esperado 0x{SENSOR_FRAME_ACK:02X})')
+        return None
+
+    decoder = SENSOR_ID_DECODERS.get(sensor_id)
+    if decoder is None:
+        print(f'[MEAS] sensor_id sin decodificador para {sensor_name}: 0x{sensor_id:02X}')
+        return None
+
+    try:
+        raw_data, payload_t_s = decoder(payload)
+    except Exception as e:
+        print(f'[MEAS] Error al decodificar sensor_id=0x{sensor_id:02X} para {sensor_name}:', e)
+        return None
+
+    return sensor_id, raw_data, payload_t_s
 
 
 # =========================
@@ -116,34 +176,20 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
     payload_t_s: Optional[float] = None
     avg: Optional[int] = None
 
-    if payload_format == 'mb1000_bin_v1':
-        # Formato MB1000:
-        #   struct '<4i' (little-endian, int32)
-        #   orden: tiempo_s, distancia_m, velocidad_m_s, aceleracion_m_s2
-        # Todos llegan como enteros escalados por 100 (factor 0.01).
-        fmt = str(profile.get('binary_struct_format', '<4i'))
-        fields = list(profile.get('binary_fields', ['time_s', 'distance_m', 'velocity_m_s', 'acceleration_m_s2']))
-        scale = float(profile.get('binary_scale', 0.01))
-        expected_size = struct.calcsize(fmt)
-        if len(msg.payload) != expected_size:
-            print(f'[MEAS] Payload binario inválido para {sensor_name}: {len(msg.payload)} bytes (esperados: {expected_size})')
+    if payload_format in {'sensor_id_frame_v1', 'mb1000_bin_v1'}:
+        decoded = _decode_sensor_frame(msg.payload, sensor_name)
+        if decoded is None:
             return
-        if len(fields) != 4:
-            print(f'[MEAS] Configuración binary_fields inválida para {sensor_name}: {fields}')
-            return
-        try:
-            t_raw, dist_raw, vel_raw, acc_raw = struct.unpack(fmt, msg.payload)
-        except Exception as e:
-            print(f'[MEAS] Error al desempaquetar binario para {sensor_name}:', e)
-            return
-        raw_data = {
-            fields[0]: t_raw,
-            fields[1]: dist_raw,
-            fields[2]: vel_raw,
-            fields[3]: acc_raw,
-        }
-        # Conversión simple requerida: valor_real = valor_entero / 100.0
-        payload_t_s = float(t_raw) * scale
+        sensor_id, raw_data, payload_t_s = decoded
+        expected_sensor_id = profile.get('sensor_id')
+        if expected_sensor_id is not None:
+            expected_sensor_id_int = _to_int(expected_sensor_id)
+            if expected_sensor_id_int is None:
+                print(f'[MEAS] sensor_id invalido en perfil de {sensor_name}: {expected_sensor_id}')
+                return
+            if expected_sensor_id_int != sensor_id:
+                print(f'[MEAS] sensor_id no coincide para {sensor_name}: 0x{sensor_id:02X} (perfil espera 0x{expected_sensor_id_int:02X})')
+                return
     else:
         try:
             payload = msg.payload.decode('utf-8', errors='ignore')
@@ -176,7 +222,7 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
         # los no seleccionados
         if selected_channels is not None and mid not in selected_channels:
             continue
-        field_name = m.get('binary_field') if payload_format == 'mb1000_bin_v1' else m.get('json_key')
+        field_name = m.get('binary_field') if payload_format in {'sensor_id_frame_v1', 'mb1000_bin_v1'} else m.get('json_key')
         raw = raw_data.get(field_name)
         val = _to_float(raw)
         if val is not None:
