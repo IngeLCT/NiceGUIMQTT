@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import struct
 import time
 from typing import Any, Optional
 
@@ -84,7 +85,7 @@ def mqtt_on_connect(client: mqtt.Client, userdata, flags, reason_code, propertie
 
 
 def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
-    """Parsea el JSON dependiendo del sensor seleccionado y guarda en buffers dinamicos."""
+    """Parsea payload (JSON o binario) por sensor y guarda en buffers dinámicos."""
 
     # Determinar sensor a partir del tópico y verificar que esté seleccionado
     try:
@@ -107,35 +108,65 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
             return
         selected_channels = state.selected_channel_map.get(sensor_name)
 
-    try:
-        payload = msg.payload.decode('utf-8', errors='ignore')
-        j = json.loads(payload)
-        #print(payload)
-    except Exception as e:
-        print(payload)
-        print('Error al decodificar JSON:', e)
-        return
-
-    # t_ms siempre obligatorio
-    t_ms = _to_int(j.get('t_ms'))
-    if t_ms is None:
-        return
-
     # Configuración de este sensor
     profile = sensor_config.get_profile(sensor_name)
+    payload_format = str(profile.get('payload_format', 'json'))
     metrics = profile.get('metrics', [])
-    required = profile.get('required_keys', ['t_ms'])
+    raw_data: dict[str, Optional[float | int]] = {}
+    payload_t_s: Optional[float] = None
+    avg: Optional[int] = None
 
-    # Validar required_keys (además de t_ms)
-    for rk in required:
-        if rk == 't_ms':
-            continue
-        if rk not in j:
+    if payload_format == 'mb1000_bin_v1':
+        # Formato MB1000:
+        #   struct '<4i' (little-endian, int32)
+        #   orden: tiempo_s, distancia_m, velocidad_m_s, aceleracion_m_s2
+        # Todos llegan como enteros escalados por 100 (factor 0.01).
+        fmt = str(profile.get('binary_struct_format', '<4i'))
+        fields = list(profile.get('binary_fields', ['time_s', 'distance_m', 'velocity_m_s', 'acceleration_m_s2']))
+        scale = float(profile.get('binary_scale', 0.01))
+        expected_size = struct.calcsize(fmt)
+        if len(msg.payload) != expected_size:
+            print(f'[MEAS] Payload binario inválido para {sensor_name}: {len(msg.payload)} bytes (esperados: {expected_size})')
+            return
+        if len(fields) != 4:
+            print(f'[MEAS] Configuración binary_fields inválida para {sensor_name}: {fields}')
+            return
+        try:
+            t_raw, dist_raw, vel_raw, acc_raw = struct.unpack(fmt, msg.payload)
+        except Exception as e:
+            print(f'[MEAS] Error al desempaquetar binario para {sensor_name}:', e)
+            return
+        raw_data = {
+            fields[0]: t_raw,
+            fields[1]: dist_raw,
+            fields[2]: vel_raw,
+            fields[3]: acc_raw,
+        }
+        # Conversión simple requerida: valor_real = valor_entero / 100.0
+        payload_t_s = float(t_raw) * scale
+    else:
+        try:
+            payload = msg.payload.decode('utf-8', errors='ignore')
+            j = json.loads(payload)
+        except Exception as e:
+            print('Error al decodificar JSON:', e)
             return
 
-    # Leer avg_dropped si aplica
-    avg_key = profile.get('avg_dropped_key')
-    avg = _to_int(j.get(avg_key)) if avg_key else None
+        # t_ms siempre obligatorio para flujo JSON
+        t_ms = _to_int(j.get('t_ms'))
+        if t_ms is None:
+            return
+
+        required = profile.get('required_keys', ['t_ms'])
+        for rk in required:
+            if rk == 't_ms':
+                continue
+            if rk not in j:
+                return
+
+        avg_key = profile.get('avg_dropped_key')
+        avg = _to_int(j.get(avg_key)) if avg_key else None
+        raw_data = j
 
     # Leer métricas dinámicas de este sensor
     values: dict[str, Optional[float]] = {}
@@ -145,7 +176,8 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
         # los no seleccionados
         if selected_channels is not None and mid not in selected_channels:
             continue
-        raw = j.get(m.get('json_key'))
+        field_name = m.get('binary_field') if payload_format == 'mb1000_bin_v1' else m.get('json_key')
+        raw = raw_data.get(field_name)
         val = _to_float(raw)
         if val is not None:
             try:
@@ -165,11 +197,14 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
             state.last_values[pref_mid] = val
 
         if state.is_measuring:
-            # Calcular tiempo relativo común. Utiliza periodo de muestreo global.
-            sample_period = float(profile.get('sample_period_s', state.SAMPLE_PERIOD_S))
-            # Avanzar el índice global de muestra
-            t_rel_s = state.measurement_sample_index * sample_period
-            state.measurement_sample_index += 1
+            if payload_t_s is not None:
+                # Para MB1000 se usa el tiempo de ingeniería recibido en el payload.
+                t_rel_s = payload_t_s
+            else:
+                # Flujo existente: tiempo relativo por índice de muestra.
+                sample_period = float(profile.get('sample_period_s', state.SAMPLE_PERIOD_S))
+                t_rel_s = state.measurement_sample_index * sample_period
+                state.measurement_sample_index += 1
             state.measurement_elapsed_s = t_rel_s
             state.last_t_s = t_rel_s
 
@@ -319,4 +354,3 @@ def set_current_sensors(sensors: list[str]) -> None:
                     client.subscribe(topic)
                 except Exception as e:
                     print('Error al subscribir a', topic, e)
-

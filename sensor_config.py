@@ -41,11 +41,23 @@ def sensor_type(sensor_name: str) -> str:
 SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     "Mov": {
         "Name": "Sensor de Movimiento",
-        "required_keys": ["t_ms", "cm", "v_cm_s", "a_cm_s2"],
+        # Formato binario MB1000 (LV-MaxSonar-EZ):
+        #   struct '<4i' (little-endian, 4 enteros con signo de 32 bits)
+        #   orden: tiempo, distancia, velocidad, aceleracion
+        #   escala común: 0.01 -> valor_real = valor_entero / 100.0
+        # Este patrón permite extender a nuevos sensores declarando:
+        #   - payload_format
+        #   - binary_struct_format
+        #   - binary_fields (orden exacto en payload)
+        "payload_format": "mb1000_bin_v1",
+        "binary_struct_format": "<4i",
+        "binary_fields": ["time_s", "distance_m", "velocity_m_s", "acceleration_m_s2"],
+        "binary_scale": 0.01,
+        "required_keys": [],
         "metrics": [
             {
                 "id": "dist_m",
-                "json_key": "cm",
+                "binary_field": "distance_m",
                 "scale": 0.01,
                 "label": "Distancia",
                 "unit": "m",
@@ -55,7 +67,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
             },
             {
                 "id": "vel_m_s",
-                "json_key": "v_cm_s",
+                "binary_field": "velocity_m_s",
                 "scale": 0.01,
                 "label": "Velocidad",
                 "unit": "m/s",
@@ -65,7 +77,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
             },
             {
                 "id": "acc_m_s2",
-                "json_key": "a_cm_s2",
+                "binary_field": "acceleration_m_s2",
                 "scale": 0.01,
                 "label": "Aceleracion",
                 "unit": "m/s²",
@@ -80,11 +92,15 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     # Alias para convención nueva: Movimiento1/Movimiento2/... -> tipo "Movimiento"
     "Movimiento": {
         "Name": "Sensor de Movimiento",
-        "required_keys": ["t_ms", "cm", "v_cm_s", "a_cm_s2"],
+        "payload_format": "mb1000_bin_v1",
+        "binary_struct_format": "<4i",
+        "binary_fields": ["time_s", "distance_m", "velocity_m_s", "acceleration_m_s2"],
+        "binary_scale": 0.01,
+        "required_keys": [],
         "metrics": [
             {
                 "id": "dist_m",
-                "json_key": "cm",
+                "binary_field": "distance_m",
                 "scale": 0.01,
                 "label": "Distancia",
                 "unit": "m",
@@ -94,7 +110,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
             },
             {
                 "id": "vel_m_s",
-                "json_key": "v_cm_s",
+                "binary_field": "velocity_m_s",
                 "scale": 0.01,
                 "label": "Velocidad",
                 "unit": "m/s",
@@ -104,7 +120,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
             },
             {
                 "id": "acc_m_s2",
-                "json_key": "a_cm_s2",
+                "binary_field": "acceleration_m_s2",
                 "scale": 0.01,
                 "label": "Aceleracion",
                 "unit": "m/s²",
