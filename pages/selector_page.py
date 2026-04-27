@@ -23,6 +23,7 @@ import state
 @ui.page('/')
 def page_index() -> None:
     """Sensor selection page."""
+    ui.dark_mode().enable()
     ui.label(f'Selector de Sensor {state.EQ_PREFIX}/').classes('text-2xl font-bold')
     ui.label(
         f'Se detectan automáticamente los sensores de {state.EQ_PREFIX}/; puedes seleccionar y abrir el dashboard.'
