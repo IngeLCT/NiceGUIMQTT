@@ -125,29 +125,8 @@ def page_dashboard(sensors: str) -> None:
     dropped_label = None
     metric_labels: Dict[str, Any] = {}
 
-    config_dialog = None
-    duration_input = None
-    unit_select = None
-
     series_selector = None
     series_table = None
-
-    def configure_time(value: Any, unit: str) -> None:
-        """Configura la duración de la medición. Si value <= 0 -> sin límite."""
-        try:
-            v = float(value)
-        except Exception:
-            v = 0.0
-
-        if v <= 0:
-            state.measurement_duration_s = None
-        else:
-            state.measurement_duration_s = v * (60.0 if unit == 'minutos' else 1.0)
-
-        ui.notify(
-            'Duración configurada: sin límite' if state.measurement_duration_s is None else f'Duración configurada: {state.measurement_duration_s:.1f} s',
-            type='info',
-        )
 
     def clear_current_measurement(clear_buffers: bool = False) -> None:
         """Limpia datos en vivo (y opcionalmente buffers) y restaura UI."""
@@ -195,21 +174,26 @@ def page_dashboard(sensors: str) -> None:
             p.update()
 
     def start_measurement() -> None:
-        """Inicia la medición y reinicia el tiempo relativo."""
-        state.display_series_index = None
-        state.is_measuring = True
+        """Solicita al sensor iniciar mediciones y prepara la UI para recibirlas."""
+        if not mqtt_handler.publish_measurement_command(sensor_names, start=True):
+            ui.notify('No se pudo enviar START al sensor', type='negative')
+            return
 
+        state.display_series_index = None
         if series_selector is not None:
             series_selector.value = None
             series_selector.update()
 
         clear_current_measurement(clear_buffers=True)
-        ui.notify('Medición iniciada', type='positive')
+        state.is_measuring = True
+        ui.notify('START enviado al sensor', type='positive')
 
     def stop_measurement() -> None:
-        if state.is_measuring:
+        if mqtt_handler.publish_measurement_command(sensor_names, start=False):
             state.is_measuring = False
-            ui.notify('Medición detenida', type='warning')
+            ui.notify('STOP enviado al sensor', type='warning')
+        else:
+            ui.notify('No se pudo enviar STOP al sensor', type='negative')
 
     def save_series() -> None:
         """Guarda la medición actual como una serie y prepara para la siguiente."""
@@ -306,13 +290,6 @@ def page_dashboard(sensors: str) -> None:
 
     def update_plots() -> None:
         """Actualiza gráficas, etiquetas y tabla."""
-        # Paro automático basado en tiempo relativo
-        if state.is_measuring and state.measurement_duration_s is not None:
-            with state.data_lock:
-                elapsed = state.measurement_elapsed_s
-            if elapsed >= state.measurement_duration_s:
-                stop_measurement()
-
         # Obtener datos
         with state.data_lock:
             if state.display_series_index is None:
@@ -411,18 +388,6 @@ def page_dashboard(sensors: str) -> None:
                 lbl.style('display: none')
             metric_labels[midp] = lbl
         dropped_label = ui.label('avg_dropped: --').classes('text-lg font-bold')
-
-    # Dialogo configuración de tiempo
-    with ui.dialog() as config_dialog, ui.card():
-        ui.label('Configurar duración de la medición').classes('text-lg font-bold')
-        duration_input = ui.number(label='Duración (0 = sin límite)', value=1, min=0, precision=0)
-        unit_select = ui.select(options=['segundos', 'minutos'], value='segundos')
-        with ui.row().classes('gap-2'):
-            ui.button(
-                'Aceptar',
-                on_click=lambda: (configure_time(duration_input.value, unit_select.value), config_dialog.close()),
-            ).props('color=primary')
-            ui.button('Cancelar', on_click=config_dialog.close).props('color=negative')
 
     # Dialogo configuración de sensores/canales
     # Permite al usuario activar o desactivar canales (métricas) para cada sensor.
@@ -526,7 +491,6 @@ def page_dashboard(sensors: str) -> None:
             ui.button('Cancelar', on_click=channel_dialog.close).props('color=negative')
     # Barra de controles
     with ui.row().classes('gap-2'):
-        ui.button('Configurar tiempo', on_click=config_dialog.open).props('color=primary')
         # Botón para configurar sensores/canales
         ui.button('Configurar sensores', on_click=channel_dialog.open).style('background-color:#663300 !important; color:#ffffff !important')
         ui.button('Iniciar', on_click=start_measurement).props('color=positive')

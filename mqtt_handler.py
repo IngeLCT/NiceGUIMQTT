@@ -14,6 +14,9 @@ MB1000_SENSOR_ID = 0x01
 SENSOR_FRAME_ACK = 0x06
 SENSOR_FRAME_HEADER_SIZE = 3
 MB1000_FRAME_SIZE = 13
+SENSOR_COMMAND_FRAME_SIZE = 4
+SENSOR_COMMAND_START = 0x01
+SENSOR_COMMAND_STOP = 0x00
 
 
 def _to_float(v: Any) -> Optional[float]:
@@ -59,6 +62,11 @@ def _decode_mb1000_payload(payload: bytes) -> tuple[dict[str, int], float]:
 SENSOR_ID_DECODERS = {
     MB1000_SENSOR_ID: _decode_mb1000_payload,
 }
+
+
+def _build_sensor_command_payload(sensor_id: int, command: int) -> bytes:
+    """Build command frame: ACK, total_bytes, sensor_id, command."""
+    return struct.pack('<BBBB', SENSOR_FRAME_ACK, SENSOR_COMMAND_FRAME_SIZE, sensor_id, command)
 
 
 def _decode_sensor_frame(payload: Any, sensor_name: str) -> tuple[int, dict[str, int], float] | None:
@@ -294,6 +302,40 @@ def start_mqtt() -> mqtt.Client:
     client.loop_start()
     state.mqtt_client = client
     return client
+
+
+def publish_measurement_command(sensor_names: list[str], start: bool) -> bool:
+    """Publish START/STOP command frames to selected sensors."""
+    client = state.mqtt_client
+    if client is None:
+        print('[MEAS] No hay cliente MQTT para publicar comando de medicion')
+        return False
+
+    command = SENSOR_COMMAND_START if start else SENSOR_COMMAND_STOP
+    command_name = 'START' if start else 'STOP'
+    ok = True
+
+    for sensor_name in sensor_names:
+        profile = sensor_config.get_profile(sensor_name)
+        sensor_id = _to_int(profile.get('sensor_id'))
+        if sensor_id is None:
+            print(f'[MEAS] No se puede publicar {command_name} para {sensor_name}: perfil sin sensor_id')
+            ok = False
+            continue
+
+        topic = f'{state.EQ_PREFIX}/{sensor_name}/cmd'
+        payload = _build_sensor_command_payload(sensor_id, command)
+
+        try:
+            info = client.publish(topic, payload=payload, qos=1, retain=False)
+            if getattr(info, 'rc', mqtt.MQTT_ERR_SUCCESS) != mqtt.MQTT_ERR_SUCCESS:
+                print(f'[MEAS] Error al publicar {command_name} en {topic}: rc={info.rc}')
+                ok = False
+        except Exception as e:
+            print(f'[MEAS] Error al publicar {command_name} en {topic}:', e)
+            ok = False
+
+    return ok
 
 
 def set_current_sensor(sensor: str) -> None:
