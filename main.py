@@ -26,6 +26,4 @@ mqtt_handler.start_mqtt()
 UI_HOST = '0.0.0.0'  # use 0.0.0.0 if you want to access from other devices
 UI_PORT = 8765
 
-ui.colors(primary='#2563eb', secondary='#374151', accent='#22c55e', dark='#111827', positive='#16a34a', negative='#dc2626', warning='#d97706')
-
 ui.run(host=UI_HOST, port=UI_PORT, title='Dashboard MQTT con NiceGUI')
