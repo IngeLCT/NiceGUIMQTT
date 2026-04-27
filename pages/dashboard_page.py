@@ -35,8 +35,9 @@ def create_figure(metric: Dict[str, Any]) -> go.Figure:
     fig.update_layout(
         title=f"{metric.get('label', hover_name)} - Tiempo",
         showlegend=False,
-        plot_bgcolor='#ffffff',
-        paper_bgcolor='#ffffff',
+        plot_bgcolor='#111827',
+        paper_bgcolor='#111827',
+        font={'color': '#e5e7eb'},
         margin={'l': 55, 'r': 20, 'b': 85, 't': 30, 'pad': 4},
         yaxis={
             'title': {'text': f"{metric.get('label', hover_name)} ({unit})".strip(), 'font': {'family': 'Arial', 'color': color, 'size': 14}},
@@ -44,12 +45,16 @@ def create_figure(metric: Dict[str, Any]) -> go.Figure:
             'color': color,
             'autorange': True,
             'showgrid': True,
+            'gridcolor': '#374151',
+            'zerolinecolor': '#4b5563',
         },
         xaxis={
-            'title': {'text': 'Tiempo transcurrido (s)', 'font': {'family': 'Arial', 'color': '#000000', 'size': 14}},
-            'tickfont': {'family': 'Arial', 'color': '#000000', 'size': 14},
+            'title': {'text': 'Tiempo transcurrido (s)', 'font': {'family': 'Arial', 'color': '#e5e7eb', 'size': 14}},
+            'tickfont': {'family': 'Arial', 'color': '#e5e7eb', 'size': 14},
             'type': 'linear',
             'showgrid': True,
+            'gridcolor': '#374151',
+            'zerolinecolor': '#4b5563',
         },
     )
     return fig
@@ -96,15 +101,31 @@ def page_dashboard(sensors: str) -> None:
         ui.label('Agrega estos sensores/tipos a sensor_config.py para poder ver gráficas.').classes('text-sm text-gray-600')
         return
 
-    # Utiliza la lista de métricas activas desde el estado global. Si no hay
-    # configuración previa, se considerarn todas las métricas definidas arriba.
+    # Derivar métricas activas desde la selección actual por sensor.
+    # Si no existe selección previa para un sensor, usar los defaults definidos en sensor_config.py.
     with state.data_lock:
-        if state.current_metric_ids:
-            selected_metric_ids = list(state.current_metric_ids)
-        else:
-            selected_metric_ids = [m['id'] for m in full_metric_defs]
-            # Actualizar buffers para estas métricas iniciales
-            state.ensure_metric_buffers(selected_metric_ids)
+        current_channel_map = dict(state.selected_channel_map)
+
+    selected_metric_ids: list[str] = []
+    for sname in sensor_names:
+        selected_set = current_channel_map.get(sname)
+        if selected_set is None:
+            selected_set = set(sensor_config.get_default_metric_ids(sname))
+            current_channel_map[sname] = set(selected_set)
+        for m in sensor_config.get_metrics(sname):
+            if m['id'] in selected_set:
+                selected_metric_ids.append(f'{sname}:{m["id"]}')
+
+    if not selected_metric_ids:
+        for sname in sensor_names:
+            defaults = sensor_config.get_default_metric_ids(sname) or sensor_config.get_metric_ids(sname)[:1]
+            current_channel_map[sname] = set(defaults)
+            for mid in defaults:
+                selected_metric_ids.append(f'{sname}:{mid}')
+
+    with state.data_lock:
+        state.selected_channel_map = dict(current_channel_map)
+        state.ensure_metric_buffers(selected_metric_ids)
 
     # metric_ids es una lista local que referencia a las métricas activas. Se
     # actualizará cuando el usuario cambie la selección de canales.
@@ -369,7 +390,7 @@ def page_dashboard(sensors: str) -> None:
     # =========================
     # UI
     # =========================
-    #ui.dark_mode().auto()
+    ui.dark_mode().enable()
     ui.button('⟵ Volver', on_click=lambda: ui.navigate.to('/')).props('flat color=primary')
     # Encabezado que muestra los sensores seleccionados
     display_names = {s: sensor_config.get_sensor_display_name(s) for s in sensor_names}

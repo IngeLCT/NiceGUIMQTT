@@ -66,7 +66,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s",
                 "color": "#2ca02c",
                 "hover_name": "Velocidad",
-                "Default": True,
+                "Default": False,
             },
             {
                 "id": "acc_m_s2",
@@ -76,7 +76,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s²",
                 "color": "#ff0000",
                 "hover_name": "Aceleracion",
-                "Default": True,
+                "Default": False,
             },
         ],
         "avg_dropped_key": None,  # indicador opcional
@@ -108,7 +108,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s",
                 "color": "#2ca02c",
                 "hover_name": "Velocidad",
-                "Default": True,
+                "Default": False,
             },
             {
                 "id": "acc_m_s2",
@@ -118,7 +118,7 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
                 "unit": "m/s²",
                 "color": "#ff0000",
                 "hover_name": "Aceleracion",
-                "Default": True,
+                "Default": False,
             },
         ],
         "avg_dropped_key": None,
