@@ -125,7 +125,7 @@ def page_dashboard(sensors: str) -> None:
 
     with state.data_lock:
         state.selected_channel_map = dict(current_channel_map)
-        state.ensure_metric_buffers(selected_metric_ids)
+    state.ensure_metric_buffers(selected_metric_ids)
 
     # metric_ids es una lista local que referencia a las métricas activas. Se
     # actualizará cuando el usuario cambie la selección de canales.
