@@ -13,6 +13,7 @@ import state
 MB1000_SENSOR_ID = 0x01
 SENSOR_FRAME_ACK = 0x06
 SENSOR_FRAME_HEADER_SIZE = 3
+SENSOR_HEARTBEAT_FRAME_SIZE = 3
 MB1000_FRAME_SIZE = 13
 SENSOR_COMMAND_FRAME_SIZE = 4
 SENSOR_COMMAND_START = 0x01
@@ -69,8 +70,13 @@ def _build_sensor_command_payload(sensor_id: int, command: int) -> bytes:
     return struct.pack('<BBBB', SENSOR_FRAME_ACK, SENSOR_COMMAND_FRAME_SIZE, sensor_id, command)
 
 
-def _decode_sensor_frame(payload: Any, sensor_name: str) -> tuple[int, dict[str, int], float] | None:
-    """Validate and decode framed binary sensor payloads by sensor_id."""
+def _decode_sensor_frame(payload: Any, sensor_name: str) -> tuple[str, int, dict[str, int], float | None] | None:
+    """Validate and decode framed binary sensor payloads by sensor_id.
+
+    Returns:
+      ('heartbeat', sensor_id, {}, None) for short presence frames
+      ('measurement', sensor_id, raw_data, payload_t_s) for full measurements
+    """
     if not isinstance(payload, bytes):
         print(f'[MEAS] Payload binario invalido para {sensor_name}: tipo {type(payload).__name__}, esperado bytes')
         return None
@@ -90,6 +96,9 @@ def _decode_sensor_frame(payload: Any, sensor_name: str) -> tuple[int, dict[str,
         print(f'[MEAS] ACK invalido para {sensor_name}: 0x{ack:02X} (esperado 0x{SENSOR_FRAME_ACK:02X})')
         return None
 
+    if total_bytes == SENSOR_HEARTBEAT_FRAME_SIZE:
+        return 'heartbeat', sensor_id, {}, None
+
     decoder = SENSOR_ID_DECODERS.get(sensor_id)
     if decoder is None:
         print(f'[MEAS] sensor_id sin decodificador para {sensor_name}: 0x{sensor_id:02X}')
@@ -101,7 +110,7 @@ def _decode_sensor_frame(payload: Any, sensor_name: str) -> tuple[int, dict[str,
         print(f'[MEAS] Error al decodificar sensor_id=0x{sensor_id:02X} para {sensor_name}:', e)
         return None
 
-    return sensor_id, raw_data, payload_t_s
+    return 'measurement', sensor_id, raw_data, payload_t_s
 
 
 # =========================
@@ -184,11 +193,13 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
     payload_t_s: Optional[float] = None
     avg: Optional[int] = None
 
+    is_heartbeat = False
+
     if payload_format in {'sensor_id_frame_v1', 'mb1000_bin_v1'}:
         decoded = _decode_sensor_frame(msg.payload, sensor_name)
         if decoded is None:
             return
-        sensor_id, raw_data, payload_t_s = decoded
+        frame_kind, sensor_id, raw_data, payload_t_s = decoded
         expected_sensor_id = profile.get('sensor_id')
         if expected_sensor_id is not None:
             expected_sensor_id_int = _to_int(expected_sensor_id)
@@ -198,6 +209,8 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
             if expected_sensor_id_int != sensor_id:
                 print(f'[MEAS] sensor_id no coincide para {sensor_name}: 0x{sensor_id:02X} (perfil espera 0x{expected_sensor_id_int:02X})')
                 return
+        if frame_kind == 'heartbeat':
+            is_heartbeat = True
     else:
         try:
             payload = msg.payload.decode('utf-8', errors='ignore')
@@ -221,6 +234,9 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
         avg_key = profile.get('avg_dropped_key')
         avg = _to_int(j.get(avg_key)) if avg_key else None
         raw_data = j
+
+    if is_heartbeat:
+        return
 
     # Leer métricas dinámicas de este sensor
     values: dict[str, Optional[float]] = {}
