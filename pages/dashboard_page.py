@@ -11,12 +11,15 @@ import sensor_config
 import state
 
 
+GRAPH_BASE_COLORS = ['#a4bdf4', '#5fd35f', '#ff4d4d']
+
+
 def create_figure(metric: Dict[str, Any]) -> go.Figure:
     """Crea una grafica Plotly para una metrica (configurada en sensor_config.py)."""
     fig = go.Figure()
     hover_name = metric.get('hover_name', metric.get('label', metric.get('id', 'value')))
     unit = metric.get('unit', '')
-    color = metric.get('color', '#1f77b4')
+    color = metric.get('color', GRAPH_BASE_COLORS[0])
 
     fig.add_trace(
         go.Scatter(
@@ -136,9 +139,37 @@ def page_dashboard(sensors: str) -> None:
     metric_defs = list(full_metric_defs)
     metric_def_by_id = {m['id']: m for m in metric_defs}
 
+    def _apply_graph_palette(active_ids: List[str]) -> None:
+        for idx, mid in enumerate(active_ids[:len(GRAPH_BASE_COLORS)]):
+            color = GRAPH_BASE_COLORS[idx]
+            metric = metric_def_by_id.get(mid)
+            fig = figures.get(mid)
+            if metric is None or fig is None:
+                continue
+            metric['color'] = color
+            unit = metric.get('unit', '')
+            hover_name = metric.get('hover_name', metric.get('label', metric.get('id', 'value')))
+            fig.data[0].line.color = color
+            fig.update_layout(
+                yaxis={
+                    'title': {
+                        'text': f"{metric.get('label', hover_name)} ({unit})".strip(),
+                        'font': {'family': 'Arial', 'color': color, 'size': 14},
+                    },
+                    'tickfont': {'family': 'Arial', 'color': color, 'size': 14},
+                    'color': color,
+                    'autorange': True,
+                    'showgrid': True,
+                    'gridcolor': '#374151',
+                    'zerolinecolor': '#4b5563',
+                },
+            )
+
     # Figuras y plots (dinámicos)
     figures: Dict[str, go.Figure] = {m['id']: create_figure(m) for m in metric_defs}
     plots: Dict[str, Any] = {}
+
+    _apply_graph_palette(metric_ids)
 
     # Referencias UI
     t_label = None
@@ -493,6 +524,7 @@ def page_dashboard(sensors: str) -> None:
                 # Actualizar buffers y métricas activas
                 state.ensure_metric_buffers(new_metric_ids)
                 metric_ids[:] = list(new_metric_ids)
+                _apply_graph_palette(metric_ids)
                 # Mostrar u ocultar gráficas y etiquetas según la selección
                 for m in metric_defs:
                     midp = m['id']
