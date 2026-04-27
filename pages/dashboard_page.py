@@ -33,7 +33,7 @@ def create_figure(metric: Dict[str, Any]) -> go.Figure:
     )
 
     fig.update_layout(
-        title=f"{metric.get('label', hover_name)} - Tiempo",
+        title=f"{metric.get('label', hover_name)} / Tiempo",
         showlegend=False,
         plot_bgcolor='#111827',
         paper_bgcolor='#111827',
@@ -91,8 +91,7 @@ def page_dashboard(sensors: str) -> None:
             #    continue
             nm = dict(m)
             nm['id'] = f'{sname}:{m["id"]}'
-            # Ajustar etiqueta para incluir el sensor
-            nm['label'] = f'{sname} - {m.get("label", m["id"])}'
+            nm['label'] = m.get('label', m['id'])
             full_metric_defs.append(nm)
 
     if not full_metric_defs:
@@ -396,7 +395,7 @@ def page_dashboard(sensors: str) -> None:
     display_names = {s: sensor_config.get_sensor_display_name(s) for s in sensor_names}
 
     ui.label(
-        f"Dashboard - Sensores: {', '.join([display_names.get(s, s) for s in sensor_names])}"
+        f"Dashboard - Sensor de {', '.join([display_names.get(s, s) for s in sensor_names])}"
     ).classes('text-2xl font-bold')
 
     with ui.row().classes('w-full items-center gap-6'):

@@ -27,7 +27,7 @@ def page_index() -> None:
     ui.label(f'Selector de Sensor {state.EQ_PREFIX}/').classes('text-2xl font-bold')
     ui.label(
         f'Se detectan automáticamente los sensores de {state.EQ_PREFIX}/; puedes seleccionar y abrir el dashboard.'
-    ).classes('text-sm text-gray-600')
+    ).classes('text-sm').style('color: #f2f2f2')
 
     # NOTE (NiceGUI 3.5.0):
     # ``ui.select(multiple=True)`` puede lanzar el error
@@ -85,8 +85,8 @@ def page_index() -> None:
         sensor_checklist.refresh()
 
     with ui.row().classes('gap-2'):
-        ui.button('Seleccionar todo', on_click=select_all).props('outline')
-        ui.button('Limpiar', on_click=clear_selection).props('outline')
+        ui.button('Seleccionar todo', on_click=select_all).style('background-color:#737373 !important; color:#ffffff !important')
+        ui.button('Limpiar', on_click=clear_selection).style('background-color:#737373 !important; color:#ffffff !important')
 
     def open_dashboard() -> None:
         selected_list = sorted(selected_sensors)
