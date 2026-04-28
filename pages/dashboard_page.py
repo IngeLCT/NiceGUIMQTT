@@ -80,6 +80,7 @@ def page_dashboard(sensors: str) -> None:
 
     # Asegura que el cliente de medicion este suscrito a los sensores seleccionados
     mqtt_handler.set_current_sensors(sensor_names)
+    mqtt_handler.publish_select_command(sensor_names)
 
     # Construir lista completa de métricas para todos los sensores. Prefija
     # cada identificador con el nombre del sensor y actualiza la etiqueta con el
@@ -165,6 +166,26 @@ def page_dashboard(sensors: str) -> None:
                 },
             )
 
+    def _get_metric_range(mid: str) -> Optional[List[float]]:
+        sensor_name, orig_mid = mid.split(':', 1)
+        with state.data_lock:
+            metadata = dict(state.sensor_metadata.get(sensor_name, {}))
+        if not metadata:
+            return None
+        mapping = {
+            'dist_m': ('distance_min_m', 'distance_max_m'),
+            'vel_m_s': ('velocity_min_m_s', 'velocity_max_m_s'),
+            'acc_m_s2': ('acceleration_min_m_s2', 'acceleration_max_m_s2'),
+        }
+        keys = mapping.get(orig_mid)
+        if not keys:
+            return None
+        low = metadata.get(keys[0])
+        high = metadata.get(keys[1])
+        if low is None or high is None:
+            return None
+        return [float(low), float(high)]
+
     # Figuras y plots (dinámicos)
     figures: Dict[str, go.Figure] = {m['id']: create_figure(m) for m in metric_defs}
     plots: Dict[str, Any] = {}
@@ -174,6 +195,7 @@ def page_dashboard(sensors: str) -> None:
     # Referencias UI
     t_label = None
     dropped_label = None
+    protocol_label = None
     metric_labels: Dict[str, Any] = {}
 
     series_selector = None
@@ -236,13 +258,11 @@ def page_dashboard(sensors: str) -> None:
             series_selector.update()
 
         clear_current_measurement(clear_buffers=True)
-        state.is_measuring = True
-        ui.notify('START enviado al sensor', type='positive')
+        ui.notify('START enviado; esperando confirmación del sensor', type='positive')
 
     def stop_measurement() -> None:
         if mqtt_handler.publish_measurement_command(sensor_names, start=False):
-            state.is_measuring = False
-            ui.notify('STOP enviado al sensor', type='warning')
+            ui.notify('STOP enviado; esperando confirmación del sensor', type='warning')
         else:
             ui.notify('No se pudo enviar STOP al sensor', type='negative')
 
@@ -341,8 +361,8 @@ def page_dashboard(sensors: str) -> None:
 
     def update_plots() -> None:
         """Actualiza gráficas, etiquetas y tabla."""
-        # Obtener datos
         with state.data_lock:
+            protocol_map = {s: state.sensor_protocol_state.get(s, 'desconocido') for s in sensor_names}
             if state.display_series_index is None:
                 x = list(state.buf_t_s)
                 y_map = {mid: list(state.buf_values.get(mid, [])) for mid in metric_ids}
@@ -363,6 +383,8 @@ def page_dashboard(sensors: str) -> None:
         # Etiquetas
         if t_label is not None:
             t_label.text = f"t_s: {lts if lts is not None else '--'}"
+        if protocol_label is not None:
+            protocol_label.text = 'Estado: ' + ' | '.join(f'{s}: {protocol_map.get(s, "--")}' for s in sensor_names)
 
         for m in metric_defs:
             mid = m['id']
@@ -393,21 +415,34 @@ def page_dashboard(sensors: str) -> None:
         if state.display_series_index is None and x:
             x_max = x[-1]
             x_min = max(0.0, x_max - state.WINDOW_S)
-            # Actualizar rango X para todas las figuras (activas e inactivas)
             for m in metric_defs:
                 midp = m['id']
                 if midp in figures:
+                    yrange = _get_metric_range(midp)
+                    yaxis = {'showgrid': True}
+                    if yrange is None:
+                        yaxis['autorange'] = True
+                    else:
+                        yaxis['range'] = yrange
+                        yaxis['autorange'] = False
                     figures[midp].update_layout(
                         xaxis={'range': [x_min, x_max], 'showgrid': True},
-                        yaxis={'autorange': True, 'showgrid': True},
+                        yaxis=yaxis,
                     )
         else:
             for m in metric_defs:
                 midp = m['id']
                 if midp in figures:
+                    yrange = _get_metric_range(midp)
+                    yaxis = {'showgrid': True}
+                    if yrange is None:
+                        yaxis['autorange'] = True
+                    else:
+                        yaxis['range'] = yrange
+                        yaxis['autorange'] = False
                     figures[midp].update_layout(
                         xaxis={'showgrid': True},
-                        yaxis={'autorange': True, 'showgrid': True},
+                        yaxis=yaxis,
                     )
 
         for p in plots.values():
@@ -420,8 +455,13 @@ def page_dashboard(sensors: str) -> None:
     # =========================
     # UI
     # =========================
+    def go_back() -> None:
+        mqtt_handler.publish_deselect_command(sensor_names)
+        state.is_measuring = False
+        ui.navigate.to('/')
+
     ui.dark_mode().enable()
-    ui.button('⟵ Volver', on_click=lambda: ui.navigate.to('/')).props('flat color=primary')
+    ui.button('⟵ Volver', on_click=go_back).props('flat color=primary')
     # Encabezado que muestra los sensores seleccionados
     display_names = {s: sensor_config.get_sensor_display_name(s) for s in sensor_names}
 
@@ -431,6 +471,7 @@ def page_dashboard(sensors: str) -> None:
 
     with ui.row().classes('w-full items-center gap-6'):
         t_label = ui.label('t_s: --').classes('text-lg font-bold')
+        protocol_label = ui.label('Estado: --').classes('text-sm')
         for m in metric_defs:
             midp = m['id']
             lbl = ui.label(f"{m['label']}: -- {m.get('unit','')}".strip()).classes('text-lg font-bold')

@@ -39,6 +39,7 @@ def page_index() -> None:
     with ui.row().classes('w-full items-center gap-4'):
         ui.label('Sensores').classes('text-sm')
         status = ui.label('Buscando sensores...').classes('text-sm')
+        proto_status = ui.label('').classes('text-xs')
 
     @ui.refreshable
     def sensor_checklist() -> None:
@@ -58,6 +59,7 @@ def page_index() -> None:
 
         if not opts:
             status.text = ('No se detectaron sensores, Buscando sensores...')
+            proto_status.text = ''
             return
 
         status.text = f'Sensores detectados: {len(opts)}'
@@ -70,7 +72,14 @@ def page_index() -> None:
                         else:
                             selected_sensors.discard(name)
 
-                    ui.checkbox(s, value=(s in selected_sensors), on_change=_on_change)
+                    with ui.row().classes('items-center gap-3'):
+                        ui.checkbox(s, value=(s in selected_sensors), on_change=_on_change)
+                        with state.data_lock:
+                            pstate = state.sensor_protocol_state.get(s, 'heartbeat')
+                        ui.label(f'estado: {pstate}').classes('text-xs text-gray-400')
+
+        selected_alive = [s for s in sorted(selected_sensors) if s in opts]
+        proto_status.text = 'Seleccionados: ' + (', '.join(selected_alive) if selected_alive else '--')
 
     sensor_checklist()
     ui.timer(0.5, sensor_checklist.refresh)

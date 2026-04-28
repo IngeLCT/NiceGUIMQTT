@@ -52,6 +52,12 @@ available_sensors: set[str] = set()
 # Última vez que se vio cada sensor (time.time())
 sensor_last_seen: dict[str, float] = {}
 
+# Estado de protocolo visto por sensor: heartbeat, metadata, measuring, etc.
+sensor_protocol_state: dict[str, str] = {}
+
+# Metadata de visualización recibida por sensor.
+sensor_metadata: dict[str, dict[str, float]] = {}
+
 # Si un sensor no publica por más de este tiempo (s), se considera desconectado
 SENSOR_STALE_S = 5.0
 
@@ -154,6 +160,8 @@ def reset_all_state() -> None:
         is_measuring = False
         measurement_sample_index = 0
         measurement_elapsed_s = 0.0
+
+        sensor_metadata.clear()
 
         series_data = []
         series_counter = 0

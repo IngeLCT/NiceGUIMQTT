@@ -41,11 +41,18 @@ def sensor_type(sensor_name: str) -> str:
 SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     "Mov": {
         "Name": "Sensor de Movimiento",
-        # Frame binario con header: ACK, total_bytes, sensor_id.
-        # sensor_id 0x01 se decodifica como MB1000 en mqtt_handler.py.
-        "payload_format": "sensor_id_frame_v1",
+        # Frame binario con estados / metadata / medicion para MB1000.
+        "payload_format": "sensor_state_frame_v2",
         "sensor_id": 0x01,
         "binary_fields": ["time_s", "distance_m", "velocity_m_s", "acceleration_m_s2"],
+        "metadata_fields": [
+            "distance_min_m",
+            "distance_max_m",
+            "velocity_min_m_s",
+            "velocity_max_m_s",
+            "acceleration_min_m_s2",
+            "acceleration_max_m_s2",
+        ],
         "required_keys": [],
         "metrics": [
             {
@@ -85,9 +92,17 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     # Alias para convención nueva: Movimiento1/Movimiento2/... -> tipo "Movimiento"
     "Movimiento": {
         "Name": "Sensor de Movimiento",
-        "payload_format": "sensor_id_frame_v1",
+        "payload_format": "sensor_state_frame_v2",
         "sensor_id": 0x01,
         "binary_fields": ["time_s", "distance_m", "velocity_m_s", "acceleration_m_s2"],
+        "metadata_fields": [
+            "distance_min_m",
+            "distance_max_m",
+            "velocity_min_m_s",
+            "velocity_max_m_s",
+            "acceleration_min_m_s2",
+            "acceleration_max_m_s2",
+        ],
         "required_keys": [],
         "metrics": [
             {
