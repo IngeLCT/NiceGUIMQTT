@@ -605,7 +605,7 @@ def page_dashboard(sensors: str) -> None:
         mid = m['id']
         # Mostrar u ocultar según la selección inicial
         visible = mid in metric_ids
-        p = ui.plotly(figures[mid]).classes('w-full').style('height: 20rem')
+        p = ui.plotly(figures[mid]).classes('w-full').style('height: 25rem')
         p.style(f'display: {"block" if visible else "none"}')
         plots[mid] = p
 
