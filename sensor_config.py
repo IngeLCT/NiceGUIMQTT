@@ -230,13 +230,20 @@ SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     },
 
     "Lux": {
-        "required_keys": ["t_ms", "Lux"],
         "Name": "Sensor de Lux",
+        "payload_format": "sensor_state_frame_v2",
+        "sensor_id": 0x02,
+        "binary_fields": ["time_s", "lux"],
+        "metadata_fields": [
+            "lux_min",
+            "lux_max",
+        ],
+        "required_keys": [],
         "metrics": [
             {
                 "id": "Lux",
-                "json_key": "Lux",
-                "scale": 1.0,
+                "binary_field": "lux",
+                "scale": 0.01,
                 "label": "Lux",
                 "unit": "lux",
                 "color": "#003300",

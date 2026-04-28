@@ -17,6 +17,8 @@ SENSOR_HEARTBEAT_FRAME_SIZE = 3
 SENSOR_SHORT_ACK_FRAME_SIZE = 4
 MB1000_METADATA_FRAME_SIZE = 17
 MB1000_MEASUREMENT_FRAME_SIZE = 14
+LUX_METADATA_FRAME_SIZE = 13
+LUX_MEASUREMENT_FRAME_SIZE = 12
 SENSOR_COMMAND_FRAME_SIZE = 4
 
 SENSOR_COMMAND_SELECT = 0x10
@@ -103,6 +105,39 @@ def _decode_mb1000_measurement_payload(payload: bytes) -> tuple[dict[str, int], 
     return raw_data, t_s_x100 / 100.0
 
 
+def _decode_lux_metadata_payload(payload: bytes) -> tuple[dict[str, int], None]:
+    if len(payload) != LUX_METADATA_FRAME_SIZE:
+        raise ValueError(f'Metadata Lux requiere {LUX_METADATA_FRAME_SIZE} bytes, recibidos {len(payload)}')
+
+    frame_type, lux_min, lux_max, expected_ack = struct.unpack_from('<BIIB', payload, SENSOR_FRAME_HEADER_SIZE)
+    if frame_type != FRAME_TYPE_METADATA:
+        raise ValueError(f'frame_type metadata Lux invalido: 0x{frame_type:02X}')
+
+    raw_data = {
+        'frame_type': frame_type,
+        'lux_min': lux_min,
+        'lux_max': lux_max,
+        'expected_ack': expected_ack,
+    }
+    return raw_data, None
+
+
+def _decode_lux_measurement_payload(payload: bytes) -> tuple[dict[str, int], float]:
+    if len(payload) != LUX_MEASUREMENT_FRAME_SIZE:
+        raise ValueError(f'Medicion Lux requiere {LUX_MEASUREMENT_FRAME_SIZE} bytes, recibidos {len(payload)}')
+
+    frame_type, t_s_x100, lux_x100 = struct.unpack_from('<BII', payload, SENSOR_FRAME_HEADER_SIZE)
+    if frame_type != FRAME_TYPE_MEASUREMENT:
+        raise ValueError(f'frame_type medicion Lux invalido: 0x{frame_type:02X}')
+
+    raw_data = {
+        'frame_type': frame_type,
+        'time_s': t_s_x100,
+        'lux': lux_x100,
+    }
+    return raw_data, t_s_x100 / 100.0
+
+
 def _decode_short_ack_payload(payload: bytes) -> tuple[dict[str, int], None]:
     if len(payload) != SENSOR_SHORT_ACK_FRAME_SIZE:
         raise ValueError(f'ACK corto requiere {SENSOR_SHORT_ACK_FRAME_SIZE} bytes, recibidos {len(payload)}')
@@ -110,7 +145,7 @@ def _decode_short_ack_payload(payload: bytes) -> tuple[dict[str, int], None]:
     return {'ack_code': ack_code}, None
 
 
-def _decode_sensor_frame(payload: Any, sensor_name: str) -> tuple[str, int, dict[str, int], float | None] | None:
+def _decode_sensor_frame(payload: Any, sensor_name: str, profile: dict[str, Any]) -> tuple[str, int, dict[str, int], float | None] | None:
     if not isinstance(payload, bytes):
         print(f'[MEAS] Payload binario invalido para {sensor_name}: tipo {type(payload).__name__}, esperado bytes')
         return None
@@ -136,12 +171,25 @@ def _decode_sensor_frame(payload: Any, sensor_name: str) -> tuple[str, int, dict
         if total_bytes == SENSOR_SHORT_ACK_FRAME_SIZE:
             raw_data, payload_t_s = _decode_short_ack_payload(payload)
             return 'short_ack', sensor_id, raw_data, payload_t_s
-        if total_bytes == MB1000_METADATA_FRAME_SIZE:
-            raw_data, payload_t_s = _decode_mb1000_metadata_payload(payload)
-            return 'metadata', sensor_id, raw_data, payload_t_s
-        if total_bytes == MB1000_MEASUREMENT_FRAME_SIZE:
-            raw_data, payload_t_s = _decode_mb1000_measurement_payload(payload)
-            return 'measurement', sensor_id, raw_data, payload_t_s
+
+        metadata_fields = set(profile.get('metadata_fields', []))
+        binary_fields = set(profile.get('binary_fields', []))
+
+        if {'distance_min_m', 'distance_max_m', 'velocity_min_m_s', 'velocity_max_m_s', 'acceleration_min_m_s2', 'acceleration_max_m_s2'}.issubset(metadata_fields):
+            if total_bytes == MB1000_METADATA_FRAME_SIZE:
+                raw_data, payload_t_s = _decode_mb1000_metadata_payload(payload)
+                return 'metadata', sensor_id, raw_data, payload_t_s
+            if total_bytes == MB1000_MEASUREMENT_FRAME_SIZE:
+                raw_data, payload_t_s = _decode_mb1000_measurement_payload(payload)
+                return 'measurement', sensor_id, raw_data, payload_t_s
+
+        if {'lux_min', 'lux_max'}.issubset(metadata_fields) and 'lux' in binary_fields:
+            if total_bytes == LUX_METADATA_FRAME_SIZE:
+                raw_data, payload_t_s = _decode_lux_metadata_payload(payload)
+                return 'metadata', sensor_id, raw_data, payload_t_s
+            if total_bytes == LUX_MEASUREMENT_FRAME_SIZE:
+                raw_data, payload_t_s = _decode_lux_measurement_payload(payload)
+                return 'measurement', sensor_id, raw_data, payload_t_s
     except Exception as e:
         print(f'[MEAS] Error al decodificar frame de {sensor_name}:', e)
         return None
@@ -207,15 +255,28 @@ def _store_protocol_state(sensor_name: str, protocol_state: str) -> None:
 
 
 def _store_sensor_metadata(sensor_name: str, raw_data: dict[str, int]) -> None:
-    metadata = {
-        'distance_min_m': raw_data['distance_min_m'] / 100.0,
-        'distance_max_m': raw_data['distance_max_m'] / 100.0,
-        'velocity_min_m_s': raw_data['velocity_min_m_s'] / 100.0,
-        'velocity_max_m_s': raw_data['velocity_max_m_s'] / 100.0,
-        'acceleration_min_m_s2': raw_data['acceleration_min_m_s2'] / 100.0,
-        'acceleration_max_m_s2': raw_data['acceleration_max_m_s2'] / 100.0,
-        'updated_at': time.time(),
-    }
+    profile = sensor_config.get_profile(sensor_name)
+    metadata_fields = set(profile.get('metadata_fields', []))
+
+    if {'distance_min_m', 'distance_max_m', 'velocity_min_m_s', 'velocity_max_m_s', 'acceleration_min_m_s2', 'acceleration_max_m_s2'}.issubset(metadata_fields):
+        metadata = {
+            'distance_min_m': raw_data['distance_min_m'] / 100.0,
+            'distance_max_m': raw_data['distance_max_m'] / 100.0,
+            'velocity_min_m_s': raw_data['velocity_min_m_s'] / 100.0,
+            'velocity_max_m_s': raw_data['velocity_max_m_s'] / 100.0,
+            'acceleration_min_m_s2': raw_data['acceleration_min_m_s2'] / 100.0,
+            'acceleration_max_m_s2': raw_data['acceleration_max_m_s2'] / 100.0,
+            'updated_at': time.time(),
+        }
+    elif {'lux_min', 'lux_max'}.issubset(metadata_fields):
+        metadata = {
+            'lux_min': raw_data['lux_min'] / 100.0,
+            'lux_max': raw_data['lux_max'] / 100.0,
+            'updated_at': time.time(),
+        }
+    else:
+        metadata = {'updated_at': time.time()}
+
     with state.data_lock:
         state.sensor_metadata[sensor_name] = metadata
 
@@ -246,7 +307,7 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
     frame_kind: Optional[str] = None
 
     if payload_format in {'sensor_id_frame_v1', 'mb1000_bin_v1', 'sensor_state_frame_v2'}:
-        decoded = _decode_sensor_frame(msg.payload, sensor_name)
+        decoded = _decode_sensor_frame(msg.payload, sensor_name, profile)
         if decoded is None:
             return
         frame_kind, sensor_id, raw_data, payload_t_s = decoded

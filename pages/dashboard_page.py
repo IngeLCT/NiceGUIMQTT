@@ -181,6 +181,7 @@ def page_dashboard(sensors: str) -> None:
             'dist_m': ('distance_min_m', 'distance_max_m'),
             'vel_m_s': ('velocity_min_m_s', 'velocity_max_m_s'),
             'acc_m_s2': ('acceleration_min_m_s2', 'acceleration_max_m_s2'),
+            'Lux': ('lux_min', 'lux_max'),
         }
         keys = mapping.get(orig_mid)
         if not keys:

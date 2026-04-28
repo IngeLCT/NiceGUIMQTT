@@ -2,7 +2,7 @@
 Página de NiceGUI para seleccionar un sensor.
 
 Esta página enumera todos los sensores detectados y permite al usuario
-seleccionar uno o varios(Max 3). Al seleccionar un sensor, la aplicación
+seleccionar un solo sensor. Al seleccionar un sensor, la aplicación
 accede a la página del panel. La lista de sensores disponibles se actualiza
 periódicamente leyendo el conjunto ``available_sensors`` de ``state``.
 
@@ -33,8 +33,9 @@ def page_index() -> None:
     # ``ui.select(multiple=True)`` puede lanzar el error
     # "list indices must be integers or slices, not str" en algunos entornos
     # (proviene del manejo interno de eventos del select).
-    # Para hacerlo 100% estable, usamos una lista de checkboxes.
-    selected_sensors: set[str] = set()
+    # Para hacerlo 100% estable, usamos una lista de checkboxes,
+    # pero con selección exclusiva de un solo sensor.
+    selected_sensor: str | None = None
 
     with ui.row().classes('w-full items-center gap-4'):
         ui.label('Sensores').classes('text-sm')
@@ -43,6 +44,7 @@ def page_index() -> None:
 
     @ui.refreshable
     def sensor_checklist() -> None:
+        nonlocal selected_sensor
         now = time.time()
         with state.sensor_lock:
             alive: list[str] = []
@@ -54,7 +56,8 @@ def page_index() -> None:
                 else:
                     state.available_sensors.discard(s)
                     state.sensor_last_seen.pop(s, None)
-                    selected_sensors.discard(s)
+                    if selected_sensor == s:
+                        selected_sensor = None
             opts = sorted(alive)
 
         if not opts:
@@ -67,44 +70,37 @@ def page_index() -> None:
             with ui.column().classes('max-h-72 overflow-auto gap-1'):
                 for s in opts:
                     def _on_change(e, name=s) -> None:
+                        nonlocal selected_sensor
                         if e.value:
-                            selected_sensors.add(name)
-                        else:
-                            selected_sensors.discard(name)
+                            selected_sensor = name
+                        elif selected_sensor == name:
+                            selected_sensor = None
+                        sensor_checklist.refresh()
 
                     with ui.row().classes('items-center gap-3'):
-                        ui.checkbox(s, value=(s in selected_sensors), on_change=_on_change)
+                        ui.checkbox(s, value=(s == selected_sensor), on_change=_on_change)
                         with state.data_lock:
                             pstate = state.sensor_protocol_state.get(s, 'heartbeat')
                         ui.label(f'estado: {pstate}').classes('text-xs text-gray-400')
 
-        selected_alive = [s for s in sorted(selected_sensors) if s in opts]
-        proto_status.text = 'Seleccionados: ' + (', '.join(selected_alive) if selected_alive else '--')
+        proto_status.text = 'Seleccionado: ' + (selected_sensor if selected_sensor in opts else '--')
 
     sensor_checklist()
     ui.timer(0.5, sensor_checklist.refresh)
 
-    def select_all() -> None:
-        with state.sensor_lock:
-            selected_sensors.update(state.available_sensors)
-        sensor_checklist.refresh()
-
     def clear_selection() -> None:
-        selected_sensors.clear()
+        nonlocal selected_sensor
+        selected_sensor = None
         sensor_checklist.refresh()
 
     with ui.row().classes('gap-2'):
-        ui.button('Seleccionar todo', on_click=select_all).style('background-color:#737373 !important; color:#ffffff !important')
         ui.button('Limpiar', on_click=clear_selection).style('background-color:#737373 !important; color:#ffffff !important')
 
     def open_dashboard() -> None:
-        selected_list = sorted(selected_sensors)
-        if not selected_list:
-            ui.notify('Selecciona al menos un sensor', type='negative')
+        if not selected_sensor:
+            ui.notify('Selecciona un sensor', type='negative')
             return
-        # Preparar cadena para la URL separada por comas
-        sensors_str = ','.join(selected_list)
-        mqtt_handler.set_current_sensors(selected_list)
-        ui.navigate.to(f'/dashboard/{sensors_str}')
+        mqtt_handler.set_current_sensors([selected_sensor])
+        ui.navigate.to(f'/dashboard/{selected_sensor}')
 
     ui.button('Abrir dashboard', on_click=open_dashboard).props('color=primary')
