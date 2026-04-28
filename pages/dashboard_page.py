@@ -36,12 +36,15 @@ def create_figure(metric: Dict[str, Any]) -> go.Figure:
     )
 
     fig.update_layout(
-        title=f"{metric.get('label', hover_name)} / Tiempo",
+        title={
+            'text': f"{metric.get('label', hover_name)} / Tiempo",
+            'pad': {'t': 6},
+        },
         showlegend=False,
         plot_bgcolor='#111827',
         paper_bgcolor='#111827',
         font={'color': '#e5e7eb'},
-        margin={'l': 55, 'r': 20, 'b': 85, 't': 30, 'pad': 4},
+        margin={'l': 55, 'r': 20, 'b': 85, 't': 34, 'pad': 4},
         yaxis={
             'title': {'text': f"{metric.get('label', hover_name)} ({unit})".strip(), 'font': {'family': 'Arial', 'color': color, 'size': 14}},
             'tickfont': {'family': 'Arial', 'color': color, 'size': 14},
