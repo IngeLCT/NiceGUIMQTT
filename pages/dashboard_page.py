@@ -583,7 +583,7 @@ def page_dashboard(sensors: str) -> None:
             ui.button('Aceptar', on_click=apply_channel_selection).props('color=primary')
             ui.button('Cancelar', on_click=channel_dialog.close).props('color=negative')
     # Barra de controles
-    with ui.row().classes('gap-2'):
+    with ui.row().classes('w-full items-center gap-4 flex-wrap'):
         # Botón para configurar sensores/canales
         ui.button('Configurar sensores', on_click=channel_dialog.open).style('background-color:#663300 !important; color:#ffffff !important')
         ui.button('Iniciar', on_click=start_measurement).props('color=positive')
@@ -591,8 +591,6 @@ def page_dashboard(sensors: str) -> None:
         ui.button('Guardar serie', on_click=save_series).style('background-color:#cccc00 !important; color:#000000 !important')
         ui.button('Exportar CSV', on_click=export_csv).style('background-color:#6600ff !important; color:#ffffff !important')
         ui.button('Limpiar', on_click=clear_all).style('background-color:#7a7a52 !important; color:#ffffff !important')
-
-    with ui.row().classes('w-full items-center gap-4'):
         ui.label('Serie').classes('text-sm')
         series_selector = ui.select(
             options=[s['name'] for s in state.series_data],
@@ -607,7 +605,7 @@ def page_dashboard(sensors: str) -> None:
         mid = m['id']
         # Mostrar u ocultar según la selección inicial
         visible = mid in metric_ids
-        p = ui.plotly(figures[mid]).classes('w-full h-72')
+        p = ui.plotly(figures[mid]).classes('w-full').style('height: 20rem')
         p.style(f'display: {"block" if visible else "none"}')
         plots[mid] = p
 
