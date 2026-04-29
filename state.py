@@ -8,7 +8,7 @@ from typing import Any, Optional
 # =========================
 # CONFIG MQTT (ajusta aqui)
 # =========================
-MQTT_BROKER = '192.168.1.136'   # o 'localhost'
+MQTT_BROKER = '192.168.50.1'   # o 'localhost'
 MQTT_PORT = 1883
 
 # Credenciales normales para leer un sensor especifico
