@@ -2,19 +2,17 @@
 
 ## 1. Propósito
 
-Este documento describe cómo funciona actualmente el lado **MQTT / NiceGUIMQTT** frente a los sensores del proyecto, en especial frente a sensores que usan el protocolo binario por estados como:
+Este documento describe la **nueva lógica objetivo** del lado **MQTT / NiceGUIMQTT** para sensores que usan protocolo binario fijo por `sensor_id`.
 
-- `Movimiento1` (MB1000)
-- `Lux1` (VEML7700)
-
-La idea es dejar claro:
-- qué topics escucha la aplicación
-- qué tipos de tramas sabe interpretar
+La idea es dejar documentado:
+- qué topics usa la aplicación
+- qué formato de trama espera por sensor
 - qué comandos publica hacia los sensores
+- qué validaciones hace antes de aceptar una trama
 - qué estado mínimo guarda por sensor
-- cómo usa la metadata y las mediciones en la UI
+- cómo obtiene rangos, unidades y offsets sin depender de metadata enviada por el sensor
 
-Este documento describe el comportamiento implementado hoy en:
+Este documento debe tomarse como la referencia para adaptar el código de:
 - `state.py`
 - `sensor_config.py`
 - `mqtt_handler.py`
@@ -23,29 +21,58 @@ Este documento describe el comportamiento implementado hoy en:
 
 ---
 
-## 2. Rol del lado MQTT
+## 2. Idea central del nuevo protocolo
+
+La nueva arquitectura cambia la responsabilidad del protocolo así:
+
+### Antes
+- el sensor podía mandar heartbeat corto
+- el sensor podía mandar metadata
+- el sensor podía mandar mediciones con tiempo dentro del payload
+- MQTT dependía de metadata para rango y UI
+
+### Ahora
+- **cada sensor tiene un `sensor_id` fijo**
+- **cada sensor manda siempre el mismo tamaño de trama** según su tipo
+- **MQTT ya conoce por `sensor_id`**:
+  - nombre del sensor
+  - tamaño esperado
+  - offsets
+  - tipos de datos
+  - unidades
+  - rangos min/max por variable
+- el sensor **ya no manda metadata**
+- el sensor **ya no manda tiempo** en la trama
+- el tiempo de sesión lo controla **MQTT / dashboard**
+- el sensor conserva tiempo interno solo para cálculos que necesite localmente
+
+En resumen:
+- el sensor publica datos fijos
+- MQTT interpreta por tabla fija de configuración
+
+---
+
+## 3. Rol del lado MQTT
 
 `NiceGUIMQTT` actúa como capa intermedia entre:
 - los sensores físicos que publican por MQTT
 - la interfaz de visualización y control
 
-Su responsabilidad actual es:
+Su responsabilidad objetivo es:
 - descubrir sensores activos
 - permitir seleccionar un sensor
 - suscribirse al topic de datos del sensor elegido
-- decodificar tramas JSON o binarias
-- enviar comandos (`SELECT`, `START`, `STOP`, `DESELECT`, `ACK_METADATA`)
+- decodificar tramas binarias por `sensor_id`
+- enviar comandos (`SELECT`, `START`, `STOP`, `DESELECT`, `OK`)
+- llevar el tiempo de sesión del dashboard
 - almacenar el estado mínimo necesario para graficar y controlar la sesión
+- usar configuración fija local para rangos, unidades y offsets
 
-No intenta hacer inteligencia compleja del sensor. Su función es principalmente:
-- **recibir**
-- **convertir**
-- **almacenar lo necesario**
-- **graficar**
+No debe depender de metadata del sensor para conocer la estructura de los datos.
 
 ---
 
-## 3. Conexión MQTT
+## 4. Conexión MQTT
 
 Configuración actual en `state.py`:
 
@@ -55,7 +82,7 @@ MQTT_PORT   = 1883
 MQTT_USER   = eq1
 ```
 
-### 3.1 Dos clientes MQTT lógicos
+### 4.1 Dos clientes MQTT lógicos
 
 Actualmente se levantan dos clientes:
 
@@ -77,20 +104,20 @@ EQ1/<sensor>/data
 ### Cliente de medición
 Se usa para:
 - suscribirse al topic de datos del sensor seleccionado
-- recibir metadata, ACKs y mediciones
+- recibir estados y mediciones
 - publicar comandos hacia el sensor
 
 ---
 
-## 4. Topics usados
+## 5. Topics usados
 
-### 4.1 Discovery
+### 5.1 Discovery
 
 ```text
 EQ1/#
 ```
 
-### 4.2 Datos del sensor
+### 5.2 Datos del sensor
 
 Formato general:
 
@@ -105,7 +132,7 @@ EQ1/Lux1/data
 EQ1/Movimiento1/data
 ```
 
-### 4.3 Comandos al sensor
+### 5.3 Comandos al sensor
 
 Formato general:
 
@@ -122,7 +149,7 @@ EQ1/Movimiento1/cmd
 
 ---
 
-## 5. Discovery y detección de sensores
+## 6. Discovery y detección de sensores
 
 Cuando el cliente supervisor recibe un mensaje en un topic tipo:
 
@@ -134,7 +161,7 @@ registra:
 - el nombre del sensor en `state.available_sensors`
 - la hora de la última actividad en `state.sensor_last_seen`
 
-### 5.1 Sensores considerados vivos
+### 6.1 Sensores considerados vivos
 
 Un sensor se considera vivo si publicó dentro del tiempo:
 
@@ -147,11 +174,11 @@ Si deja de publicar por más de ese tiempo:
 
 ---
 
-## 6. Selección de sensores en UI
+## 7. Selección de sensores en UI
 
 Actualmente la UI trabaja en práctica con **selección única**.
 
-### Flujo actual
+### Flujo objetivo
 1. el usuario abre la página `/`
 2. se muestran sensores detectados
 3. el usuario elige uno
@@ -162,148 +189,109 @@ Actualmente la UI trabaja en práctica con **selección única**.
 /dashboard/<sensor>
 ```
 
-Aunque el código interno soporta listas de sensores, la interfaz actual quedó simplificada para evitar mezcla ambigua de buffers.
-
 ---
 
-## 7. Estado global mínimo que guarda MQTT
+## 8. Estado global mínimo que guarda MQTT
 
-En `state.py` se conserva solo el estado mínimo necesario.
+En `state.py` se debería conservar solo el estado mínimo necesario.
 
-## 7.1 Discovery
+## 8.1 Discovery
 - `available_sensors`
 - `sensor_last_seen`
 
-## 7.2 Estado de protocolo
+## 8.2 Estado de protocolo
 - `sensor_protocol_state[sensor_name]`
 
-Valores típicos:
+Valores esperados:
 - `heartbeat`
-- `metadata`
+- `selected`
 - `measuring`
 
-## 7.3 Metadata del sensor
-- `sensor_metadata[sensor_name]`
+## 8.3 Configuración fija del sensor
+MQTT debe conocer por `sensor_id` y/o nombre del sensor:
+- `sensor_id`
+- `payload_format`
+- `total_bytes`
+- offsets de cada campo
+- tipos (`uint16`, `int16`, etc.)
+- escala
+- unidades
+- rango Y sugerido por métrica
 
-Ejemplo para Lux:
+Ejemplo conceptual:
 
 ```python
 {
-    'lux_min': 0.0,
-    'lux_max': 36000.0,
-    'updated_at': ...,
+    'Movimiento1': {
+        'sensor_id': 0x01,
+        'total_bytes': 10,
+        'state_offset': 3,
+        'fields': {
+            'distancia': {'offset': (4, 5), 'type': 'uint16', 'scale': 0.01, 'unit': 'm', 'y_range': [0, 5]},
+            'velocidad': {'offset': (6, 7), 'type': 'int16', 'scale': 0.01, 'unit': 'm/s', 'y_range': [-6, 6]},
+            'aceleracion': {'offset': (8, 9), 'type': 'int16', 'scale': 0.01, 'unit': 'm/s^2', 'y_range': [-11, 11]},
+        },
+    }
 }
 ```
 
-## 7.4 Selección actual
+## 8.4 Selección actual
 - `selected_sensor`
 - `selected_sensors`
 - `current_topic`
 - `current_topics`
 
-## 7.5 Buffers de visualización
+## 8.5 Buffers de visualización
 - `buf_t_s`
 - `buf_values`
 - `last_values`
 - `last_t_s`
 
-## 7.6 Estado de medición
+## 8.6 Estado de medición
 - `is_measuring`
-- `measurement_sample_index`
+- `measurement_start_ts`
 - `measurement_elapsed_s`
+- `measurement_sample_index`
 
-No se guarda lógica compleja de autoscaling ni historial extra por sensor más allá de lo necesario para la vista actual y series guardadas.
-
----
-
-## 8. Formatos de payload soportados
-
-`NiceGUIMQTT` soporta dos familias de formato:
-
-### 8.1 JSON
-Para sensores más simples o antiguos.
-
-### 8.2 Binario con estados
-Usado por sensores como:
-- MB1000
-- VEML7700 (`Lux1`)
-
-En `sensor_config.py`, el perfil `Lux` está definido como:
-
-```text
-payload_format = sensor_state_frame_v2
-sensor_id = 0x02
-binary_fields = [time_s, lux]
-metadata_fields = [lux_min, lux_max]
-```
+En el nuevo diseño, el tiempo de la gráfica debe salir del lado MQTT y ya no del payload del sensor.
 
 ---
 
-## 9. Decodificación binaria en MQTT
+## 9. Formato de payload soportado
 
-Toda la lógica central está en `mqtt_handler.py`.
+Para este protocolo, MQTT debe trabajar con una familia principal:
 
-## 9.1 Validaciones generales
-Antes de interpretar una trama binaria, MQTT verifica:
-- que el payload sea `bytes`
-- que tenga al menos header
-- que `len(payload) == total_bytes`
-- que el ACK sea `0x06`
-- que el `sensor_id` coincida con el esperado por el perfil del sensor
+### 9.1 Binario con trama fija por `sensor_id`
+
+Cada sensor define:
+- su propio tamaño fijo
+- su propio layout fijo
+- su propio conjunto fijo de variables
+
+MQTT debe interpretar la trama usando una tabla local ya conocida.
+
+---
+
+## 10. Validaciones binarias que MQTT debe hacer
+
+Antes de interpretar una trama binaria, MQTT debe verificar:
+
+1. que el payload sea `bytes`
+2. que tenga al menos header
+3. que `len(payload) == total_bytes`
+4. que el ACK sea `0x06`
+5. que el `sensor_id` coincida con el esperado por el sensor seleccionado
+6. que el `total_bytes` coincida también con el tamaño esperado para ese `sensor_id`
 
 Si alguna de esas validaciones falla, la trama se ignora.
 
----
-
-## 10. Tipos de trama que MQTT reconoce
-
-### 10.1 Heartbeat
-Longitud:
-
-```text
-3 bytes
-```
-
-Cuando la recibe:
-- marca el estado del sensor como `heartbeat`
-- no actualiza buffers de datos
-
-### 10.2 ACK corto
-Longitud:
-
-```text
-4 bytes
-```
-
-MQTT interpreta el `ack_code` y actualiza el estado:
-
-- `ACK_SELECT` -> `metadata`
-- `ACK_START` -> `measuring`
-- `ACK_STOP` -> `metadata`
-- `ACK_DESELECT` -> `heartbeat`
-- `ACK_METADATA_TIMEOUT` -> `heartbeat`
-
-Además:
-- `ACK_START` activa `state.is_measuring = True`
-- `ACK_STOP`, `ACK_DESELECT`, `ACK_METADATA_TIMEOUT` ponen `state.is_measuring = False`
-
-### 10.3 Metadata
-Cuando llega metadata válida:
-- actualiza `sensor_protocol_state[sensor] = metadata`
-- guarda el rango en `state.sensor_metadata`
-- publica automáticamente `ACK_METADATA` al sensor
-- no agrega nada a buffers de gráfica
-
-### 10.4 Medición
-Cuando llega una medición válida:
-- actualiza `sensor_protocol_state[sensor] = measuring`
-- activa `state.is_measuring = True`
-- convierte los campos binarios a valores físicos usando `scale`
-- agrega los puntos a los buffers si la sesión está midiendo
+Esta doble verificación es importante:
+- validación contra lo que dice el payload
+- validación contra lo que MQTT ya sabe del sensor
 
 ---
 
-## 11. Comandos que MQTT publica hacia el sensor
+## 11. Estructura general de comandos MQTT -> sensor
 
 Los comandos se generan con una trama binaria de 4 bytes:
 
@@ -317,263 +305,351 @@ Byte 3 -> command
 ### Comandos soportados
 
 ```text
-SELECT        = 0x10
-START         = 0x11
-STOP          = 0x12
-DESELECT      = 0x13
-ACK_METADATA  = 0x20
+SELECT   = 0x10
+START    = 0x11
+STOP     = 0x12
+DESELECT = 0x13
+OK       = 0x20
 ```
 
-### Helpers actuales
-En `mqtt_handler.py` existen:
-- `publish_select_command(sensor_names)`
-- `publish_measurement_command(sensor_names, start=True|False)`
-- `publish_deselect_command(sensor_names)`
-- `publish_sensor_command(sensor_names, command)`
+### Uso esperado
+- `SELECT`: el dashboard toma el sensor
+- `START`: comienza medición
+- `STOP`: detiene medición
+- `DESELECT`: libera el sensor al salir del dashboard
+- `OK`: keepalive breve mientras el sensor esté en estado `selected`
 
 ---
 
-## 12. Flujo operativo actual en UI
+## 12. Estado publicado por el sensor (`sensor_state`)
 
-## 12.1 Selector
+El byte 3 del payload publicado por el sensor queda reservado para `sensor_state`.
+
+Valores definidos:
+
+```text
+0x00 = heartbeat / disponible / no seleccionado
+0x11 = seleccionado / dashboard abierto / conectado
+0x22 = midiendo
+```
+
+MQTT debe usar este valor como referencia principal para saber en qué estado operativo está el sensor.
+
+---
+
+## 13. Trama fija del MB1000
+
+El sensor `Movimiento1` / MB1000 usa una trama fija de **10 bytes**.
+
+## 13.1 Estructura
+
+```text
+Byte 0      -> ACK
+Byte 1      -> total_bytes
+Byte 2      -> sensor_id
+Byte 3      -> sensor_state
+Byte 4..5   -> distancia_m_x100
+Byte 6..7   -> velocidad_m_s_x100
+Byte 8..9   -> aceleracion_m_s2_x100
+```
+
+## 13.2 Tipos y endianess
+
+```text
+Byte(s)    Campo                    Tipo    Endian
+0          ACK                      uint8   -
+1          total_bytes              uint8   -
+2          sensor_id                uint8   -
+3          sensor_state             uint8   -
+4..5       distancia_m_x100         uint16  little-endian
+6..7       velocidad_m_s_x100       int16   little-endian
+8..9       aceleracion_m_s2_x100    int16   little-endian
+```
+
+## 13.3 Escalas
+
+```text
+distancia_m      = distancia_m_x100 / 100.0
+velocidad_m_s    = velocidad_m_s_x100 / 100.0
+aceleracion_m_s2 = aceleracion_m_s2_x100 / 100.0
+```
+
+---
+
+## 14. Cómo debe interpretar MQTT las tramas del MB1000
+
+### 14.1 Estado `0x00` -> heartbeat
+
+Cuando llega una trama con:
+
+```text
+sensor_state = 0x00
+```
+
+y los campos de datos en cero:
+- marcar estado de protocolo como `heartbeat`
+- no activar medición
+- no agregar puntos a la gráfica
+- mantenerlo como sensor disponible en selector
+
+Ejemplo conceptual:
+
+```text
+06 0A 01 00 00 00 00 00 00 00
+```
+
+### 14.2 Estado `0x11` -> selected
+
+Cuando llega una trama con:
+
+```text
+sensor_state = 0x11
+```
+
+y campos de datos en cero:
+- marcar estado como `selected`
+- considerar que el sensor está tomado por un dashboard
+- no agregar puntos a buffers
+- responder con `OK = 0x20` para mantener el estado
+
+Ejemplo conceptual:
+
+```text
+06 0A 01 11 00 00 00 00 00 00
+```
+
+### 14.3 Estado `0x22` -> measuring
+
+Cuando llega una trama con:
+
+```text
+sensor_state = 0x22
+```
+- marcar estado como `measuring`
+- activar `state.is_measuring = True`
+- decodificar distancia, velocidad y aceleración
+- agregarlas a buffers si ese sensor es el seleccionado actual
+
+Ejemplo conceptual:
+
+```text
+06 0A 01 22 <dist_l><dist_h> <vel_l><vel_h> <acc_l><acc_h>
+```
+
+---
+
+## 15. Manejo del tiempo del lado MQTT
+
+En este diseño, el sensor ya no manda tiempo en la trama.
+
+Por lo tanto, MQTT / dashboard debe llevar el tiempo de sesión.
+
+## 15.1 Regla general
+
+Cuando el usuario presione `START`:
+- guardar `measurement_start_ts`
+- iniciar o reiniciar `measurement_sample_index`
+
+Cuando llegue una medición:
+- calcular tiempo relativo desde `measurement_start_ts`
+- o usar índice de muestra si conviene más para la implementación
+
+## 15.2 Motivación
+
+Esto permite que la duración de la sesión quede controlada desde la UI, por ejemplo con un selector de duración, sin tener que mandar tiempo o duración detallada al sensor.
+
+---
+
+## 16. Keepalive del estado `selected`
+
+Cuando el sensor está en `sensor_state = 0x11`, MQTT debe sostener ese estado mediante respuestas `OK`.
+
+## 16.1 Lógica esperada del sensor
+
+- el sensor publica su trama en estado `0x11` cada `15 s`
+- espera recibir `OK`
+- si no recibe `OK`, incrementa contador interno
+- si el contador llega a `5`, vuelve a `0x00`
+- si sí recibe `OK`, reinicia ese contador a `0`
+
+## 16.2 Responsabilidad de MQTT
+
+Cada vez que llegue una trama válida con `sensor_state = 0x11` del sensor actualmente tomado por el dashboard:
+- MQTT debe publicar `OK = 0x20`
+
+---
+
+## 17. Flujo operativo objetivo en UI
+
+## 17.1 Selector
 En la página de selector:
 - se muestran sensores vivos
-- se muestra el estado actual visto (`heartbeat`, `metadata`, `measuring`)
+- se muestra el estado actual visto (`heartbeat`, `selected`, `measuring`)
 - el usuario elige un sensor
 - se navega al dashboard
 
-## 12.2 Al abrir dashboard
-Actualmente el dashboard hace esto:
-1. fija el sensor actual
-2. asegura suscripción al topic `/data`
-3. publica `SELECT`
+## 17.2 Al abrir dashboard
+Al abrir el dashboard:
+1. se fija el sensor actual
+2. se asegura suscripción al topic `/data`
+3. se publica `SELECT`
 
-Es decir, el `SELECT` sale automáticamente al abrir dashboard.
+Esto indica al sensor que ese dashboard lo tomó.
 
-## 12.3 Al recibir metadata
-MQTT:
-- guarda `lux_min` y `lux_max`
-- responde `ACK_METADATA`
+## 17.3 Mientras el dashboard está abierto
+Si el sensor responde/publica en estado `0x11`:
+- MQTT debe responder `OK`
+- el sensor permanece en estado `selected`
 
-La UI usa esos valores como rango Y cuando existen.
-
-## 12.4 Al dar START
+## 17.4 Al dar START
 La UI publica `START`.
 
-Después espera:
-- `ACK_START`
-- mediciones reales
+Desde ese punto:
+- el dashboard considera iniciada la sesión
+- empieza a llevar tiempo local
+- espera mediciones con `sensor_state = 0x22`
 
-## 12.5 Durante medición
+## 17.5 Durante medición
 La UI actualiza:
 - gráfica
 - etiquetas de valor
 - estado de protocolo
 - tabla en vivo
 
-## 12.6 Al dar STOP
+## 17.6 Al dar STOP
 La UI publica `STOP`.
 
-Después espera:
-- `ACK_STOP`
-- retorno a `metadata`
+Después espera que el sensor vuelva a `sensor_state = 0x11`.
 
-## 12.7 Al volver atrás
+## 17.7 Al volver atrás
 Al salir del dashboard:
-- publica `DESELECT`
-- vuelve al selector
+- MQTT debe publicar `DESELECT`
+- el sensor debe volver inmediatamente a `0x00`
+- luego la UI vuelve al selector
 
 ---
 
-## 13. Cómo usa la metadata la UI
+## 18. Rango Y y unidades de la UI
 
-La UI no calcula escalado complejo por su cuenta cuando existe metadata válida.
+La UI ya no debe depender de metadata del sensor para rangos o unidades.
 
-En `dashboard_page.py`, para cada métrica intenta obtener el rango desde `state.sensor_metadata`.
+En cambio, debe tomar esa información desde la configuración local del sensor.
 
-### Para Lux
-Usa:
+### Ejemplo para MB1000
 
-```text
-lux_min
-lux_max
-```
+Desde configuración local:
+- distancia: `0 .. 5 m`
+- velocidad: `-6 .. 6 m/s`
+- aceleración: `-11 .. 11 m/s^2`
 
-Si la metadata existe:
-- fija `yaxis.range = [lux_min, lux_max]`
-- desactiva autorange en Y
-
-Si no existe metadata:
-- usa `autorange = True`
-
-Esto hace que la gráfica dependa directamente del rango sugerido por el sensor.
+La gráfica debe usar esos valores como rango inicial para cada métrica.
 
 ---
 
-## 14. Conversión de medición a valores graficables
+## 19. Qué debe guardar y qué no debe guardar MQTT
 
-Para `Lux1`, el perfil define:
-
-```text
-binary_field = lux
-scale = 0.01
-```
-
-Por eso, cuando MQTT recibe `lux_x100` del sensor:
-- primero lo interpreta como entero
-- luego lo multiplica por `0.01`
-- el valor final queda en lux reales
-
-Lo mismo pasa con `time_s`:
-- el sensor manda tiempo escalado x100
-- MQTT lo convierte a segundos
-
----
-
-## 15. Búferes y ventana en vivo
-
-Configuración actual:
-
-```text
-SAMPLE_HZ = 4
-WINDOW_S = 60
-REFRESH_S = 0.25
-```
-
-Interpretación:
-- la UI considera una ventana viva de hasta 60 s
-- los buffers se dimensionan según eso
-- la actualización visual ocurre periódicamente
-
-### Nota
-El tiempo real que entra al buffer, cuando la trama binaria lo trae explícito, sale del payload del sensor, no del reloj local del dashboard.
-
----
-
-## 16. Qué guarda y qué no guarda MQTT
-
-## Sí guarda
+## Sí debe guardar
 - último estado del sensor
-- última metadata recibida
+- configuración fija del sensor
 - buffers de tiempo y valores
 - series guardadas por el usuario
 - selección de métricas activas
+- hora de inicio de medición
 
-## No guarda como lógica pesada
-- autoscaling inteligente por sensor
-- percentiles
-- histogramas
-- máximos históricos complejos
-- lógica de escalones del sensor
-
-La idea del diseño actual es que MQTT sea relativamente simple y que el sensor pueda encargarse de la inteligencia específica de su rango cuando eso se implemente.
+## Ya no necesita guardar por protocolo
+- metadata recibida del sensor
+- ACKs de metadata
+- rangos dinámicos enviados por el sensor
 
 ---
 
-## 17. Comportamientos importantes actuales
-
-### 17.1 ACK automático de metadata
-Cuando llega una metadata válida, MQTT responde automáticamente:
-
-```text
-ACK_METADATA = 0x20
-```
-
-Eso evita que la UI tenga que hacerlo manualmente.
-
-### 17.2 Solo se procesan datos del sensor seleccionado
-Aunque el supervisor detecta todo `EQ1/#`, el cliente de medición solo usa de verdad los sensores actualmente seleccionados.
-
-### 17.3 Rango Y guiado por metadata
-Si hay metadata, la UI prefiere ese rango.
-
-### 17.4 Selección única efectiva
-Aunque internamente hay estructuras para varios sensores, la UI actual quedó restringida a selección práctica de un solo sensor a la vez para evitar mezclas ambiguas.
-
----
-
-## 18. Flujo completo resumido desde el lado MQTT
+## 20. Flujo completo resumido desde el lado MQTT
 
 ```text
 1. Supervisor detecta sensor por EQ1/<sensor>/data
 2. Usuario lo selecciona en UI
 3. Dashboard publica SELECT
-4. Sensor responde ACK_SELECT
-5. Sensor manda metadata
-6. MQTT guarda metadata y responde ACK_METADATA
-7. Usuario da START
-8. Dashboard publica START
-9. Sensor responde ACK_START
-10. Sensor publica mediciones
-11. MQTT decodifica, convierte y grafica
-12. Usuario da STOP o el sensor termina
-13. Sensor vuelve a metadata
-14. Usuario sale y dashboard publica DESELECT
+4. Sensor empieza a publicar con sensor_state = 0x11
+5. MQTT responde OK para sostener la sesión
+6. Usuario da START
+7. Dashboard publica START
+8. Sensor publica mediciones con sensor_state = 0x22
+9. MQTT decodifica, convierte y grafica
+10. Usuario da STOP
+11. Dashboard publica STOP
+12. Sensor vuelve a publicar con sensor_state = 0x11
+13. Usuario sale del dashboard
+14. Dashboard publica DESELECT
+15. Sensor vuelve a sensor_state = 0x00
 ```
 
 ---
 
-## 19. Ejemplo conceptual para Lux1
+## 21. Ejemplo conceptual para MB1000
 
-### Metadata recibida
-
-```text
-Topic: EQ1/Lux1/data
-Payload binario: metadata
-```
-
-MQTT la convierte a algo como:
-
-```python
-state.sensor_metadata['Lux1'] = {
-    'lux_min': 0.0,
-    'lux_max': 36000.0,
-    'updated_at': 1714420000.0,
-}
-```
-
-### Medición recibida
-
-Si llega una medición con:
+### Heartbeat
 
 ```text
-lux_x100 = 123456
+Topic: EQ1/Movimiento1/data
+Payload: 06 0A 01 00 00 00 00 00 00 00
 ```
 
-MQTT la interpreta como:
+Interpretación:
+- sensor disponible
+- no seleccionado
+- no medir
+
+### Selected
 
 ```text
-lux = 1234.56
+Topic: EQ1/Movimiento1/data
+Payload: 06 0A 01 11 00 00 00 00 00 00
 ```
 
-Y la agrega al buffer de la métrica:
+Interpretación:
+- sensor tomado por dashboard
+- MQTT debe responder `OK`
+
+### Medición
 
 ```text
-Lux1:Lux
+Topic: EQ1/Movimiento1/data
+Payload: 06 0A 01 22 ...datos...
 ```
+
+Interpretación:
+- sensor midiendo
+- decodificar distancia/velocidad/aceleración
+- agregar a buffers del dashboard
 
 ---
 
-## 20. Limitaciones actuales
+## 22. Estado de Lux y otros sensores
 
-Este documento describe el estado actual implementado.
+Esta misma filosofía debe extenderse a otros sensores:
+- `Lux1`
+- sensores futuros
 
-Aún no está integrado del lado MQTT:
-- metadata dinámica durante `START`
-- ajuste incremental de eje Y durante una sesión por nuevas metadata del sensor
-- flags de `low_signal`, `high_signal`, `saturated`
-- lógica especial para expansión sin contracción durante la sesión
+Cada sensor puede tener:
+- distinto `sensor_id`
+- distinto tamaño fijo
+- distinto layout fijo
 
-Si esas mejoras se agregan después, este documento deberá actualizarse.
+Pero la lógica general debe mantenerse:
+- `sensor_state` en byte 3
+- sin metadata
+- sin tiempo dentro del payload
+- interpretación por tabla local del lado MQTT
 
 ---
 
-## 21. Recomendación de diseño vigente
+## 23. Recomendación de diseño vigente
 
-Para mantener MQTT liviano y fácil de portar a otras interfaces en el futuro, este lado debería seguir siendo principalmente:
+Para mantener MQTT liviano y fácil de mantener, este lado debería seguir siendo principalmente:
 - receptor de tramas
 - convertidor de datos
 - emisor de comandos simples
+- gestor de tiempo de sesión
 - graficador
 
-La lógica más específica del sensor, por ejemplo autosugerencia de rango visual, conviene mantenerla en el propio sensor siempre que sea posible.
+La estructura fija por `sensor_id` hace al sistema más simple, más predecible y más fácil de depurar.
