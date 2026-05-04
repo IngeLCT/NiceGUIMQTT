@@ -198,8 +198,13 @@ def _append_measurement_values(sensor_name: str, profile: dict[str, Any], raw_da
         for pref_mid, val in prefixed_values.items():
             state.last_values[pref_mid] = val
 
-        sample_period = float(profile.get('sample_period_s', state.SAMPLE_PERIOD_S))
-        t_rel_s = state.measurement_sample_index * sample_period
+        t_rel_s = _to_float(raw_data.get('time_s_x100'))
+        if t_rel_s is None:
+            sample_period = float(profile.get('sample_period_s', state.SAMPLE_PERIOD_S))
+            t_rel_s = state.measurement_sample_index * sample_period
+        else:
+            t_rel_s = t_rel_s / 100.0
+
         state.measurement_sample_index += 1
         state.measurement_elapsed_s = t_rel_s
         state.last_t_s = t_rel_s

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import time
 from typing import Any, Dict, List, Optional
 
 import plotly.graph_objects as go
@@ -318,7 +317,7 @@ def page_dashboard(sensors: str) -> None:
 
         clear_current_measurement(clear_buffers=True)
         with state.data_lock:
-            state.measurement_start_ts = time.monotonic()
+            state.measurement_start_ts = None
             state.measurement_duration_s = float(duration_s)
             state.auto_stop_sent = False
 
@@ -433,7 +432,6 @@ def page_dashboard(sensors: str) -> None:
         should_auto_stop = False
         with state.data_lock:
             protocol_map = {s: state.sensor_protocol_state.get(s, 'desconocido') for s in sensor_names}
-            measurement_start_ts = state.measurement_start_ts
             measurement_duration_s = state.measurement_duration_s
             auto_stop_sent = state.auto_stop_sent
             is_measuring = state.is_measuring
@@ -454,9 +452,8 @@ def page_dashboard(sensors: str) -> None:
                 lavg = None
                 show_avg = False
 
-        if measurement_start_ts is not None and measurement_duration_s is not None and not auto_stop_sent:
-            elapsed = time.monotonic() - measurement_start_ts
-            if elapsed >= measurement_duration_s:
+        if lts is not None and measurement_duration_s is not None and not auto_stop_sent:
+            if float(lts) >= float(measurement_duration_s):
                 should_auto_stop = True
 
         # Etiquetas

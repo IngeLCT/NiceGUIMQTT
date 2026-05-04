@@ -30,7 +30,7 @@ MB1000_PROFILE: Dict[str, Any] = {
     'sample_period_s': 0.25,
     'protocol': {
         'ack': 0x06,
-        'total_bytes': 10,
+        'total_bytes': 14,
         'endianness': 'little',
         'state_offset': 3,
         'state_map': {
@@ -56,9 +56,20 @@ MB1000_PROFILE: Dict[str, Any] = {
                 'type': 'uint8',
                 'description': 'Estado operativo del sensor',
             },
-            'distance_m_x100': {
+            'time_s_x100': {
                 'byte_start': 4,
-                'byte_end': 5,
+                'byte_end': 7,
+                'size_bytes': 4,
+                'type': 'uint32',
+                'signed': False,
+                'scale': 0.01,
+                'unit': 's',
+                'treatment': 'linear',
+                'description': 'Tiempo de medición en segundos multiplicado por 100',
+            },
+            'distance_m_x100': {
+                'byte_start': 8,
+                'byte_end': 9,
                 'size_bytes': 2,
                 'type': 'uint16',
                 'signed': False,
@@ -68,8 +79,8 @@ MB1000_PROFILE: Dict[str, Any] = {
                 'description': 'Distancia en metros multiplicada por 100',
             },
             'velocity_m_s_x100': {
-                'byte_start': 6,
-                'byte_end': 7,
+                'byte_start': 10,
+                'byte_end': 11,
                 'size_bytes': 2,
                 'type': 'int16',
                 'signed': True,
@@ -79,8 +90,8 @@ MB1000_PROFILE: Dict[str, Any] = {
                 'description': 'Velocidad en m/s multiplicada por 100',
             },
             'acceleration_m_s2_x100': {
-                'byte_start': 8,
-                'byte_end': 9,
+                'byte_start': 12,
+                'byte_end': 13,
                 'size_bytes': 2,
                 'type': 'int16',
                 'signed': True,
