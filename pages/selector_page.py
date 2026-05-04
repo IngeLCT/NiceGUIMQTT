@@ -3,8 +3,9 @@ Página de NiceGUI para seleccionar un sensor.
 
 Esta página enumera todos los sensores detectados y permite al usuario
 seleccionar un solo sensor. Al seleccionar un sensor, la aplicación
-accede a la página del panel. La lista de sensores disponibles se actualiza
-periódicamente leyendo el conjunto ``available_sensors`` de ``state``.
+espera la confirmación de conexión del protocolo antes de abrir el dashboard.
+La lista de sensores disponibles se actualiza periódicamente leyendo el
+conjunto ``available_sensors`` de ``state``.
 
 Para registrar la página con NiceGUI, simplemente importe este módulo en su
 script principal. La ruta se define mediante el decorador ``@ui.page``.
@@ -12,6 +13,7 @@ script principal. La ruta se define mediante el decorador ``@ui.page``.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from nicegui import ui
@@ -26,15 +28,9 @@ def page_index() -> None:
     ui.dark_mode().enable()
     ui.label(f'Selector de Sensor {state.EQ_PREFIX}/').classes('text-2xl font-bold')
     ui.label(
-        f'Se detectan automáticamente los sensores de {state.EQ_PREFIX}/; puedes seleccionar y abrir el dashboard.'
+        f'Se detectan automáticamente los sensores de {state.EQ_PREFIX}/; puedes seleccionar y conectar un sensor antes de abrir el dashboard.'
     ).classes('text-sm').style('color: #f2f2f2')
 
-    # NOTE (NiceGUI 3.5.0):
-    # ``ui.select(multiple=True)`` puede lanzar el error
-    # "list indices must be integers or slices, not str" en algunos entornos
-    # (proviene del manejo interno de eventos del select).
-    # Para hacerlo 100% estable, usamos una lista de checkboxes,
-    # pero con selección exclusiva de un solo sensor.
     selected_sensor: str | None = None
 
     with ui.row().classes('w-full items-center gap-4'):
@@ -48,7 +44,6 @@ def page_index() -> None:
         now = time.time()
         with state.sensor_lock:
             alive: list[str] = []
-            # limpiar sensores que ya no publican
             for s in list(state.available_sensors):
                 last = state.sensor_last_seen.get(s, 0.0)
                 if now - last <= state.SENSOR_STALE_S:
@@ -61,7 +56,7 @@ def page_index() -> None:
             opts = sorted(alive)
 
         if not opts:
-            status.text = ('No se detectaron sensores, Buscando sensores...')
+            status.text = 'No se detectaron sensores, Buscando sensores...'
             proto_status.text = ''
             return
 
@@ -96,11 +91,33 @@ def page_index() -> None:
     with ui.row().classes('gap-2'):
         ui.button('Limpiar', on_click=clear_selection).style('background-color:#737373 !important; color:#ffffff !important')
 
-    def open_dashboard() -> None:
+    async def connect_and_open_dashboard() -> None:
         if not selected_sensor:
             ui.notify('Selecciona un sensor', type='negative')
             return
-        mqtt_handler.set_current_sensors([selected_sensor])
-        ui.navigate.to(f'/dashboard/{selected_sensor}')
 
-    ui.button('Abrir dashboard', on_click=open_dashboard).props('color=primary')
+        sensor_name = selected_sensor
+        mqtt_handler.set_current_sensors([sensor_name])
+
+        ui.notify('Conectando...', type='warning')
+        if not mqtt_handler.publish_select_command([sensor_name]):
+            ui.notify('No se pudo enviar SELECT al sensor', type='negative')
+            return
+
+        timeout_s = 12.0
+        poll_s = 0.25
+        waited_s = 0.0
+
+        while waited_s < timeout_s:
+            with state.data_lock:
+                protocol_state = state.sensor_protocol_state.get(sensor_name)
+            if protocol_state == 'selected':
+                ui.notify('Sensor conectado, abriendo dashboard...', type='positive')
+                ui.navigate.to(f'/dashboard/{sensor_name}')
+                return
+            await asyncio.sleep(poll_s)
+            waited_s += poll_s
+
+        ui.notify('Tiempo de espera agotado: el sensor no confirmó conexión', type='negative')
+
+    ui.button('Conectar', on_click=connect_and_open_dashboard).props('color=primary')
