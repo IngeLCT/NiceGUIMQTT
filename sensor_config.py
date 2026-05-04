@@ -1,6 +1,6 @@
 # sensor_config.py
 # Configuración local del protocolo MQTT para sensores soportados.
-# Por ahora solo se mantiene MB1000 / Movimiento.
+# Sensores ya alineados al protocolo fijo: MB1000 y VEML7700.
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ def sensor_type(sensor_name: str) -> str:
 
     if name in {'Mov', 'Movimiento', 'MB1000'}:
         return 'MB1000'
+    if name in {'Lux', 'Lux1', 'VEML', 'VEML7700'}:
+        return 'VEML7700'
 
     return name or 'MB1000'
 
@@ -140,8 +142,82 @@ MB1000_PROFILE: Dict[str, Any] = {
 }
 
 
+VEML7700_PROFILE: Dict[str, Any] = {
+    'Name': 'Sensor de Luz VEML7700',
+    'payload_format': 'sensor_state_fixed_v1',
+    'sensor_id': 0x02,
+    'sample_period_s': 0.20,
+    'protocol': {
+        'ack': 0x06,
+        'total_bytes': 12,
+        'endianness': 'little',
+        'state_offset': 3,
+        'state_map': {
+            0x00: 'heartbeat',
+            0x11: 'selected',
+            0x22: 'measuring',
+        },
+        'command_frame': {
+            'total_bytes': 4,
+            'commands': {
+                'select': 0x10,
+                'start': 0x11,
+                'stop': 0x12,
+                'deselect': 0x13,
+                'ok': 0x20,
+            },
+        },
+        'fields': {
+            'sensor_state': {
+                'byte_start': 3,
+                'byte_end': 3,
+                'size_bytes': 1,
+                'type': 'uint8',
+                'description': 'Estado operativo del sensor',
+            },
+            'time_s_x100': {
+                'byte_start': 4,
+                'byte_end': 7,
+                'size_bytes': 4,
+                'type': 'uint32',
+                'signed': False,
+                'scale': 0.01,
+                'unit': 's',
+                'treatment': 'linear',
+                'description': 'Tiempo de medición en segundos multiplicado por 100',
+            },
+            'lux_x100': {
+                'byte_start': 8,
+                'byte_end': 11,
+                'size_bytes': 4,
+                'type': 'uint32',
+                'signed': False,
+                'scale': 0.01,
+                'unit': 'lux',
+                'treatment': 'linear',
+                'description': 'Iluminancia en lux multiplicada por 100',
+            },
+        },
+    },
+    'metrics': [
+        {
+            'id': 'lux',
+            'source_field': 'lux_x100',
+            'scale': 0.01,
+            'label': 'Lux',
+            'unit': 'lux',
+            'color': '#f6c445',
+            'hover_name': 'Lux',
+            'Default': True,
+            'y_range': [0.0, 36000.0],
+        },
+    ],
+}
+
+
 SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
     'MB1000': MB1000_PROFILE,
+    'VEML7700': VEML7700_PROFILE,
 }
 
 
