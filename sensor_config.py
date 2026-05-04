@@ -1,337 +1,176 @@
 # sensor_config.py
-# Configuración dinámica por tipo/base de sensor (Sensor<Tipo> o <Magnitud>n)
+# Configuración local del protocolo MQTT para sensores soportados.
+# Por ahora solo se mantiene MB1000 / Movimiento.
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+
+from typing import Any, Dict, List
 
 
 def sensor_type(sensor_name: str) -> str:
-    """Extrae el tipo/base del sensor soportando convenciones antigua y nueva.
+    """Extrae el tipo/base del sensor soportando alias conocidos."""
+    name = (sensor_name or '').strip()
 
-    Convenciones soportadas:
-      SensorMov     -> Mov
-      Movimiento1   -> Movimiento
-      SensorTemp2   -> Temp
-    """
-    name = sensor_name or ''
-
-    # Compatibilidad con la convención anterior: Sensor<Tipo>
     if name.startswith('Sensor') and len(name) > len('Sensor'):
         name = name[len('Sensor'):]
 
-    # Nueva convención: <Magnitud>n (se elimina solo el sufijo numérico)
     while name and name[-1].isdigit():
         name = name[:-1]
 
-    return name or sensor_name
+    if name in {'Mov', 'Movimiento', 'MB1000'}:
+        return 'MB1000'
+
+    return name or 'MB1000'
 
 
-# -------------------------
-# CONFIGURACIÓN POR TIPO
-# -------------------------
-# Cada tipo define:
-#   required_keys: claves mínimas que deben existir en el JSON (además de t_ms)
-#   metrics: lista de métricas para graficar/mostrar (dinámicas)
-#     - id: nombre interno (buffers, tabla)
-#     - json_key: clave en el JSON
-#     - scale: multiplicador (cm->m = 0.01)
-#     - label, unit, color, hover_name: para UI
-#   avg_dropped_key: (opcional) clave para indicador avg_dropped
+MB1000_PROFILE: Dict[str, Any] = {
+    'Name': 'Sensor de Movimiento MB1000',
+    'payload_format': 'sensor_state_fixed_v1',
+    'sensor_id': 0x01,
+    'sample_period_s': 0.25,
+    'protocol': {
+        'ack': 0x06,
+        'total_bytes': 10,
+        'endianness': 'little',
+        'state_offset': 3,
+        'state_map': {
+            0x00: 'heartbeat',
+            0x11: 'selected',
+            0x22: 'measuring',
+        },
+        'command_frame': {
+            'total_bytes': 4,
+            'commands': {
+                'select': 0x10,
+                'start': 0x11,
+                'stop': 0x12,
+                'deselect': 0x13,
+                'ok': 0x20,
+            },
+        },
+        'fields': {
+            'sensor_state': {
+                'byte_start': 3,
+                'byte_end': 3,
+                'size_bytes': 1,
+                'type': 'uint8',
+                'description': 'Estado operativo del sensor',
+            },
+            'distance_m_x100': {
+                'byte_start': 4,
+                'byte_end': 5,
+                'size_bytes': 2,
+                'type': 'uint16',
+                'signed': False,
+                'scale': 0.01,
+                'unit': 'm',
+                'treatment': 'linear',
+                'description': 'Distancia en metros multiplicada por 100',
+            },
+            'velocity_m_s_x100': {
+                'byte_start': 6,
+                'byte_end': 7,
+                'size_bytes': 2,
+                'type': 'int16',
+                'signed': True,
+                'scale': 0.01,
+                'unit': 'm/s',
+                'treatment': 'linear',
+                'description': 'Velocidad en m/s multiplicada por 100',
+            },
+            'acceleration_m_s2_x100': {
+                'byte_start': 8,
+                'byte_end': 9,
+                'size_bytes': 2,
+                'type': 'int16',
+                'signed': True,
+                'scale': 0.01,
+                'unit': 'm/s²',
+                'treatment': 'linear',
+                'description': 'Aceleración en m/s² multiplicada por 100',
+            },
+        },
+    },
+    'metrics': [
+        {
+            'id': 'dist_m',
+            'source_field': 'distance_m_x100',
+            'scale': 0.01,
+            'label': 'Distancia',
+            'unit': 'm',
+            'color': '#a4bdf4',
+            'hover_name': 'Distancia',
+            'Default': True,
+            'y_range': [0.0, 5.0],
+        },
+        {
+            'id': 'vel_m_s',
+            'source_field': 'velocity_m_s_x100',
+            'scale': 0.01,
+            'label': 'Velocidad',
+            'unit': 'm/s',
+            'color': '#5fd35f',
+            'hover_name': 'Velocidad',
+            'Default': False,
+            'y_range': [-6.0, 6.0],
+        },
+        {
+            'id': 'acc_m_s2',
+            'source_field': 'acceleration_m_s2_x100',
+            'scale': 0.01,
+            'label': 'Aceleracion',
+            'unit': 'm/s²',
+            'color': '#ff4d4d',
+            'hover_name': 'Aceleracion',
+            'Default': False,
+            'y_range': [-11.0, 11.0],
+        },
+    ],
+}
+
 
 SENSOR_TYPES: Dict[str, Dict[str, Any]] = {
-    "Mov": {
-        "Name": "Sensor de Movimiento",
-        # Frame binario con estados / metadata / medicion para MB1000.
-        "payload_format": "sensor_state_frame_v2",
-        "sensor_id": 0x01,
-        "binary_fields": ["time_s", "distance_m", "velocity_m_s", "acceleration_m_s2"],
-        "metadata_fields": [
-            "distance_min_m",
-            "distance_max_m",
-            "velocity_min_m_s",
-            "velocity_max_m_s",
-            "acceleration_min_m_s2",
-            "acceleration_max_m_s2",
-        ],
-        "required_keys": [],
-        "metrics": [
-            {
-                "id": "dist_m",
-                "binary_field": "distance_m",
-                "scale": 0.01,
-                "label": "Distancia",
-                "unit": "m",
-                "color": "#a4bdf4",
-                "hover_name": "Distancia",
-                "Default": True,
-            },
-            {
-                "id": "vel_m_s",
-                "binary_field": "velocity_m_s",
-                "scale": 0.01,
-                "label": "Velocidad",
-                "unit": "m/s",
-                "color": "#5fd35f",
-                "hover_name": "Velocidad",
-                "Default": False,
-            },
-            {
-                "id": "acc_m_s2",
-                "binary_field": "acceleration_m_s2",
-                "scale": 0.01,
-                "label": "Aceleracion",
-                "unit": "m/s²",
-                "color": "#ff4d4d",
-                "hover_name": "Aceleracion",
-                "Default": False,
-            },
-        ],
-        "avg_dropped_key": None,  # indicador opcional
-    },
-
-    # Alias para convención nueva: Movimiento1/Movimiento2/... -> tipo "Movimiento"
-    "Movimiento": {
-        "Name": "Sensor de Movimiento",
-        "payload_format": "sensor_state_frame_v2",
-        "sensor_id": 0x01,
-        "binary_fields": ["time_s", "distance_m", "velocity_m_s", "acceleration_m_s2"],
-        "metadata_fields": [
-            "distance_min_m",
-            "distance_max_m",
-            "velocity_min_m_s",
-            "velocity_max_m_s",
-            "acceleration_min_m_s2",
-            "acceleration_max_m_s2",
-        ],
-        "required_keys": [],
-        "metrics": [
-            {
-                "id": "dist_m",
-                "binary_field": "distance_m",
-                "scale": 0.01,
-                "label": "Distancia",
-                "unit": "m",
-                "color": "#a4bdf4",
-                "hover_name": "Distancia",
-                "Default": True,
-            },
-            {
-                "id": "vel_m_s",
-                "binary_field": "velocity_m_s",
-                "scale": 0.01,
-                "label": "Velocidad",
-                "unit": "m/s",
-                "color": "#5fd35f",
-                "hover_name": "Velocidad",
-                "Default": False,
-            },
-            {
-                "id": "acc_m_s2",
-                "binary_field": "acceleration_m_s2",
-                "scale": 0.01,
-                "label": "Aceleracion",
-                "unit": "m/s²",
-                "color": "#ff4d4d",
-                "hover_name": "Aceleracion",
-                "Default": False,
-            },
-        ],
-        "avg_dropped_key": None,
-    },
-
-    "Gyro": {
-        "Name": "Sensor Giroscopio y Aceleracion",
-        # claves mínimas esperadas (si falta una, se ignora el mensaje)
-        "required_keys": ["t_ms", "temp_c", "ax", "ay", "az", "gx", "gy", "gz"],
-
-        # métricas que se van a graficar (una gráfica por métrica)
-        "metrics": [
-            {
-                "id": "temp_c",
-                "json_key": "temp_c",
-                "scale": 1.0,
-                "label": "Temperatura",
-                "unit": "°C",
-                "color": "#ff7f0e",
-                "Default": False,
-                "hover_name": "Temperatura",
-
-            },
-
-            # Aceleración (unidades: depende de tu IMU; común: m/s² o g)
-            # Si tu IMU entrega en "g", deja unit="g" y scale=1.0
-            # Si entrega en m/s², unit="m/s²" y scale=1.0
-            {
-                "id": "ax",
-                "json_key": "ax",
-                "scale": 1.0,
-                "label": "Aceleracion X",
-                "unit": "m/s²",
-                "color": "#1f77b4",
-                "Default": True,
-                "hover_name": "Ax",
-            },
-            {
-                "id": "ay",
-                "json_key": "ay",
-                "scale": 1.0,
-                "label": "Aceleracion Y",
-                "unit": "m/s²",
-                "color": "#2ca02c",
-                "Default": False,
-                "hover_name": "Ay",
-            },
-            {
-                "id": "az",
-                "json_key": "az",
-                "scale": 1.0,
-                "label": "Aceleracion Z",
-                "unit": "m/s²",
-                "color": "#d62728",
-                "hover_name": "Az",
-                "Default": False,
-            },
-
-            # Giro (unidades: común: deg/s o rad/s)
-            # Ajusta unit según lo que mandes realmente.
-            {
-                "id": "gx",
-                "json_key": "gx",
-                "scale": 1.0,
-                "label": "Giro X",
-                "unit": "rad/s",
-                "color": "#9467bd",
-                "hover_name": "Gx",
-                "Default": False,
-            },
-            {
-                "id": "gy",
-                "json_key": "gy",
-                "scale": 1.0,
-                "label": "Giro Y",
-                "unit": "rad/s",
-                "color": "#8c564b",
-                "hover_name": "Gy",
-                "Default": False,
-            },
-            {
-                "id": "gz",
-                "json_key": "gz",
-                "scale": 1.0,
-                "label": "Giro Z",
-                "unit": "rad/s",
-                "color": "#e377c2",
-                "hover_name": "Gz",
-                "Default": False,
-            },
-        ],
-
-        "avg_dropped_key": None,
-    },
-
-    "Lux": {
-        "Name": "Sensor de Lux",
-        "payload_format": "sensor_state_frame_v2",
-        "sensor_id": 0x02,
-        "binary_fields": ["time_s", "lux"],
-        "metadata_fields": [
-            "lux_min",
-            "lux_max",
-        ],
-        "required_keys": [],
-        "metrics": [
-            {
-                "id": "Lux",
-                "binary_field": "lux",
-                "scale": 0.01,
-                "label": "Lux",
-                "unit": "lux",
-                "color": "#003300",
-                "hover_name": "Lux",
-                "Default": True,
-            },
-        ],
-        "avg_dropped_key": None,
-    },
-    "TeHu": {
-        "required_keys": ["t_ms", "temp"],
-        "Name": "Sensor de Temperatura y Humedad Relativa",
-        "metrics": [
-            {
-                "id": "temp",
-                "json_key": "temp",
-                "scale": 1.0,
-                "label": "Temperatura",
-                "unit": "°C",
-                "color": "#0066ff",
-                "hover_name": "temp",
-                "Default": True,
-            },
-            {
-                "id": "hume",
-                "json_key": "hume",
-                "scale": 1.0,
-                "label": "Humedad Relativa",
-                "unit": "%",
-                "color": "#ff9900",
-                "hover_name": "hume",
-                "Default": False,
-            },
-        ],
-        "avg_dropped_key": None,
-    },
+    'MB1000': MB1000_PROFILE,
 }
 
-# Fallback si llega un sensor no configurado (recomendado dejarlo para no "tronar" la app)
-DEFAULT_TYPE_PROFILE: Optional[Dict[str, Any]] = {
-    "required_keys": ["t_ms"],
-    "metrics": [],
-    "avg_dropped_key": "avg_dropped",
-}
+
+DEFAULT_TYPE_PROFILE: Dict[str, Any] = MB1000_PROFILE
 
 
 def get_profile(sensor_name: str) -> Dict[str, Any]:
-    """
-    Devuelve el perfil para un sensor.
-    Busca por tipo/base extraído de Sensor<Tipo> o <Magnitud>n. Si no existe, usa DEFAULT_TYPE_PROFILE.
-    """
-    t = sensor_type(sensor_name)
-    return SENSOR_TYPES.get(
-        t,
-        DEFAULT_TYPE_PROFILE or {"required_keys": ["t_ms"], "metrics": [], "avg_dropped_key": None},
-    )
+    return SENSOR_TYPES.get(sensor_type(sensor_name), DEFAULT_TYPE_PROFILE)
 
 
 def get_metrics(sensor_name: str) -> List[Dict[str, Any]]:
-    return list(get_profile(sensor_name).get("metrics", []))
+    return list(get_profile(sensor_name).get('metrics', []))
 
 
 def is_default_metric(metric: Dict[str, Any]) -> bool:
-    """Indica si una métrica debe iniciar habilitada.
-
-    Acepta la clave "Default" (como la pides) y también "default".
-    Si no existe ninguna de las dos, se asume True (compatibilidad).
-    """
-    if "Default" in metric:
-        return bool(metric.get("Default"))
-    return bool(metric.get("default", True))
+    if 'Default' in metric:
+        return bool(metric.get('Default'))
+    return bool(metric.get('default', True))
 
 
 def get_default_metrics(sensor_name: str) -> List[Dict[str, Any]]:
-    """Métricas que inician habilitadas según Default/default."""
     return [m for m in get_metrics(sensor_name) if is_default_metric(m)]
 
 
 def get_default_metric_ids(sensor_name: str) -> List[str]:
-    """IDs de métricas habilitadas por defecto."""
-    return [m["id"] for m in get_default_metrics(sensor_name)]
+    return [m['id'] for m in get_default_metrics(sensor_name)]
 
 
 def get_metric_ids(sensor_name: str) -> List[str]:
-    return [m["id"] for m in get_metrics(sensor_name)]
+    return [m['id'] for m in get_metrics(sensor_name)]
+
 
 def get_sensor_display_name(sensor_name: str) -> str:
-    """Nombre amigable para mostrar en UI."""
     prof = get_profile(sensor_name)
     name = prof.get('Name') or prof.get('name')
     return str(name) if name else sensor_name
+
+
+def get_metric_by_id(sensor_name: str, metric_id: str) -> Dict[str, Any] | None:
+    for metric in get_metrics(sensor_name):
+        if metric.get('id') == metric_id:
+            return dict(metric)
+    return None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import time
 from typing import Any, Dict, List, Optional
 
 import plotly.graph_objects as go
@@ -12,6 +13,13 @@ import state
 
 
 GRAPH_BASE_COLORS = ['#a4bdf4', '#5fd35f', '#ff4d4d']
+DURATION_OPTIONS = {
+    '10 s': 10,
+    '30 s': 30,
+    '1 min': 60,
+    '2 min': 120,
+    '3 min': 180,
+}
 
 
 def create_figure(metric: Dict[str, Any]) -> go.Figure:
@@ -20,6 +28,7 @@ def create_figure(metric: Dict[str, Any]) -> go.Figure:
     hover_name = metric.get('hover_name', metric.get('label', metric.get('id', 'value')))
     unit = metric.get('unit', '')
     color = metric.get('color', GRAPH_BASE_COLORS[0])
+    y_range = metric.get('y_range')
 
     fig.add_trace(
         go.Scatter(
@@ -51,7 +60,8 @@ def create_figure(metric: Dict[str, Any]) -> go.Figure:
             'title': {'text': f"{metric.get('label', hover_name)} ({unit})".strip(), 'font': {'family': 'Arial', 'color': color, 'size': 14}},
             'tickfont': {'family': 'Arial', 'color': color, 'size': 14},
             'color': color,
-            'autorange': True,
+            'autorange': y_range is None,
+            'range': y_range,
             'showgrid': True,
             'gridcolor': '#374151',
             'zerolinecolor': '#4b5563',
@@ -172,25 +182,13 @@ def page_dashboard(sensors: str) -> None:
             )
 
     def _get_metric_range(mid: str) -> Optional[List[float]]:
-        sensor_name, orig_mid = mid.split(':', 1)
-        with state.data_lock:
-            metadata = dict(state.sensor_metadata.get(sensor_name, {}))
-        if not metadata:
+        metric = metric_def_by_id.get(mid)
+        if metric is None:
             return None
-        mapping = {
-            'dist_m': ('distance_min_m', 'distance_max_m'),
-            'vel_m_s': ('velocity_min_m_s', 'velocity_max_m_s'),
-            'acc_m_s2': ('acceleration_min_m_s2', 'acceleration_max_m_s2'),
-            'Lux': ('lux_min', 'lux_max'),
-        }
-        keys = mapping.get(orig_mid)
-        if not keys:
+        y_range = metric.get('y_range')
+        if not y_range or len(y_range) != 2:
             return None
-        low = metadata.get(keys[0])
-        high = metadata.get(keys[1])
-        if low is None or high is None:
-            return None
-        return [float(low), float(high)]
+        return [float(y_range[0]), float(y_range[1])]
 
     # Figuras y plots (dinámicos)
     figures: Dict[str, go.Figure] = {m['id']: create_figure(m) for m in metric_defs}
@@ -205,6 +203,7 @@ def page_dashboard(sensors: str) -> None:
     metric_labels: Dict[str, Any] = {}
 
     series_selector = None
+    duration_selector = None
     series_table = None
 
     def clear_current_measurement(clear_buffers: bool = False) -> None:
@@ -220,6 +219,9 @@ def page_dashboard(sensors: str) -> None:
                 state.last_values[mid] = None
             state.measurement_sample_index = 0
             state.measurement_elapsed_s = 0.0
+            state.measurement_start_ts = None
+            state.measurement_duration_s = None
+            state.auto_stop_sent = False
 
         # limpiar figuras de todas las métricas definidas (no solo las activas)
         for m in metric_defs:
@@ -228,7 +230,11 @@ def page_dashboard(sensors: str) -> None:
             if fig is not None:
                 fig.data[0].x = []
                 fig.data[0].y = []
-                fig.update_layout(yaxis={'autorange': True})
+                yrange = _get_metric_range(midp)
+                if yrange is None:
+                    fig.update_layout(xaxis={'autorange': True}, yaxis={'autorange': True})
+                else:
+                    fig.update_layout(xaxis={'autorange': True}, yaxis={'autorange': False, 'range': yrange})
 
         # etiquetas
         if t_label is not None:
@@ -252,8 +258,55 @@ def page_dashboard(sensors: str) -> None:
         for p in plots.values():
             p.update()
 
+    def auto_adjust_live_graphs() -> None:
+        with state.data_lock:
+            x = list(state.buf_t_s)
+            y_map = {mid: list(state.buf_values.get(mid, [])) for mid in metric_ids}
+
+        if not x:
+            return
+
+        x_range = [min(x), max(x)] if len(x) > 1 else [0.0, max(1.0, x[0])]
+        for m in metric_defs:
+            mid = m['id']
+            fig = figures.get(mid)
+            if fig is None:
+                continue
+            y_values = [v for v in y_map.get(mid, []) if v is not None]
+            yaxis = {'showgrid': True}
+            if y_values:
+                y_min = min(y_values)
+                y_max = max(y_values)
+                if y_min == y_max:
+                    pad = max(abs(y_min) * 0.1, 0.5)
+                    y_min -= pad
+                    y_max += pad
+                else:
+                    pad = max((y_max - y_min) * 0.1, 0.1)
+                    y_min -= pad
+                    y_max += pad
+                yaxis['autorange'] = False
+                yaxis['range'] = [y_min, y_max]
+            else:
+                yrange = _get_metric_range(mid)
+                if yrange is None:
+                    yaxis['autorange'] = True
+                else:
+                    yaxis['autorange'] = False
+                    yaxis['range'] = yrange
+            fig.update_layout(xaxis={'autorange': False, 'range': x_range, 'showgrid': True}, yaxis=yaxis)
+
+        for p in plots.values():
+            p.update()
+
     def start_measurement() -> None:
         """Solicita al sensor iniciar mediciones y prepara la UI para recibirlas."""
+        duration_label = duration_selector.value if duration_selector is not None else next(iter(DURATION_OPTIONS.keys()))
+        duration_s = DURATION_OPTIONS.get(duration_label)
+        if duration_s is None:
+            ui.notify('Selecciona una duración válida', type='negative')
+            return
+
         if not mqtt_handler.publish_measurement_command(sensor_names, start=True):
             ui.notify('No se pudo enviar START al sensor', type='negative')
             return
@@ -264,11 +317,21 @@ def page_dashboard(sensors: str) -> None:
             series_selector.update()
 
         clear_current_measurement(clear_buffers=True)
-        ui.notify('START enviado; esperando confirmación del sensor', type='positive')
+        with state.data_lock:
+            state.measurement_start_ts = time.monotonic()
+            state.measurement_duration_s = float(duration_s)
+            state.auto_stop_sent = False
 
-    def stop_measurement() -> None:
+        ui.notify(f'START enviado; duración configurada: {duration_label}', type='positive')
+
+    def stop_measurement(auto: bool = False) -> None:
         if mqtt_handler.publish_measurement_command(sensor_names, start=False):
-            ui.notify('STOP enviado; esperando confirmación del sensor', type='warning')
+            with state.data_lock:
+                state.auto_stop_sent = True
+                state.measurement_duration_s = None
+                state.measurement_start_ts = None
+            ui.notify('STOP automático enviado' if auto else 'STOP enviado; esperando confirmación del sensor', type='warning')
+            auto_adjust_live_graphs()
         else:
             ui.notify('No se pudo enviar STOP al sensor', type='negative')
 
@@ -367,8 +430,13 @@ def page_dashboard(sensors: str) -> None:
 
     def update_plots() -> None:
         """Actualiza gráficas, etiquetas y tabla."""
+        should_auto_stop = False
         with state.data_lock:
             protocol_map = {s: state.sensor_protocol_state.get(s, 'desconocido') for s in sensor_names}
+            measurement_start_ts = state.measurement_start_ts
+            measurement_duration_s = state.measurement_duration_s
+            auto_stop_sent = state.auto_stop_sent
+            is_measuring = state.is_measuring
             if state.display_series_index is None:
                 x = list(state.buf_t_s)
                 y_map = {mid: list(state.buf_values.get(mid, [])) for mid in metric_ids}
@@ -385,6 +453,11 @@ def page_dashboard(sensors: str) -> None:
                 last_map = {mid: (y_map[mid][-1] if y_map.get(mid) else None) for mid in metric_ids}
                 lavg = None
                 show_avg = False
+
+        if measurement_start_ts is not None and measurement_duration_s is not None and not auto_stop_sent:
+            elapsed = time.monotonic() - measurement_start_ts
+            if elapsed >= measurement_duration_s:
+                should_auto_stop = True
 
         # Etiquetas
         if t_label is not None:
@@ -417,8 +490,8 @@ def page_dashboard(sensors: str) -> None:
             fig.data[0].x = x
             fig.data[0].y = y_map.get(mid, [])
 
-        # Rango X: solo ventana en vivo
-        if state.display_series_index is None and x:
+        # Rango X/Y
+        if state.display_series_index is None and x and is_measuring:
             x_max = x[-1]
             x_min = max(0.0, x_max - state.WINDOW_S)
             for m in metric_defs:
@@ -435,6 +508,39 @@ def page_dashboard(sensors: str) -> None:
                         xaxis={'range': [x_min, x_max], 'showgrid': True},
                         yaxis=yaxis,
                     )
+        elif state.display_series_index is None and x:
+            for m in metric_defs:
+                midp = m['id']
+                if midp in figures:
+                    y_values = [v for v in y_map.get(midp, []) if v is not None]
+                    yaxis = {'showgrid': True}
+                    if y_values:
+                        y_min = min(y_values)
+                        y_max = max(y_values)
+                        if y_min == y_max:
+                            pad = max(abs(y_min) * 0.1, 0.5)
+                            y_min -= pad
+                            y_max += pad
+                        else:
+                            pad = max((y_max - y_min) * 0.1, 0.1)
+                            y_min -= pad
+                            y_max += pad
+                        yaxis['autorange'] = False
+                        yaxis['range'] = [y_min, y_max]
+                    else:
+                        yrange = _get_metric_range(midp)
+                        if yrange is None:
+                            yaxis['autorange'] = True
+                        else:
+                            yaxis['range'] = yrange
+                            yaxis['autorange'] = False
+                    xaxis = {'showgrid': True}
+                    if len(x) > 1:
+                        xaxis['range'] = [min(x), max(x)]
+                        xaxis['autorange'] = False
+                    else:
+                        xaxis['autorange'] = True
+                    figures[midp].update_layout(xaxis=xaxis, yaxis=yaxis)
         else:
             for m in metric_defs:
                 midp = m['id']
@@ -457,6 +563,9 @@ def page_dashboard(sensors: str) -> None:
         if series_table is not None:
             series_table.rows = _build_table_rows(x, y_map)
             series_table.update()
+
+        if should_auto_stop:
+            stop_measurement(auto=True)
 
     # =========================
     # UI
@@ -592,6 +701,12 @@ def page_dashboard(sensors: str) -> None:
     with ui.row().classes('w-full items-center gap-4 flex-wrap'):
         # Botón para configurar sensores/canales
         ui.button('Configurar sensores', on_click=channel_dialog.open).style('background-color:#663300 !important; color:#ffffff !important')
+        ui.label('Duración').classes('text-sm')
+        duration_selector = ui.select(
+            options=list(DURATION_OPTIONS.keys()),
+            value='10 s',
+            label='Tiempo de duración',
+        )
         ui.button('Iniciar', on_click=start_measurement).props('color=positive')
         ui.button('Detener', on_click=stop_measurement).props('color=negative')
         ui.button('Guardar serie', on_click=save_series).style('background-color:#cccc00 !important; color:#000000 !important')

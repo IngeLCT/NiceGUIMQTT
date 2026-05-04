@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import struct
 import time
 from typing import Any, Optional
@@ -10,31 +9,17 @@ import paho.mqtt.client as mqtt
 import sensor_config
 import state
 
-MB1000_SENSOR_ID = 0x01
 SENSOR_FRAME_ACK = 0x06
-SENSOR_FRAME_HEADER_SIZE = 3
-SENSOR_HEARTBEAT_FRAME_SIZE = 3
-SENSOR_SHORT_ACK_FRAME_SIZE = 4
-MB1000_METADATA_FRAME_SIZE = 17
-MB1000_MEASUREMENT_FRAME_SIZE = 14
-LUX_METADATA_FRAME_SIZE = 13
-LUX_MEASUREMENT_FRAME_SIZE = 12
 SENSOR_COMMAND_FRAME_SIZE = 4
+SENSOR_STATE_HEARTBEAT = 0x00
+SENSOR_STATE_SELECTED = 0x11
+SENSOR_STATE_MEASURING = 0x22
 
 SENSOR_COMMAND_SELECT = 0x10
 SENSOR_COMMAND_START = 0x11
 SENSOR_COMMAND_STOP = 0x12
 SENSOR_COMMAND_DESELECT = 0x13
-SENSOR_COMMAND_ACK_METADATA = 0x20
-
-ACK_SELECT = 0x90
-ACK_START = 0x91
-ACK_STOP = 0x92
-ACK_DESELECT = 0x93
-ACK_METADATA_TIMEOUT = 0x95
-
-FRAME_TYPE_METADATA = 0x30
-FRAME_TYPE_MEASUREMENT = 0x31
+SENSOR_COMMAND_OK = 0x20
 
 
 def _to_float(v: Any) -> Optional[float]:
@@ -66,136 +51,67 @@ def _build_sensor_command_payload(sensor_id: int, command: int) -> bytes:
     return struct.pack('<BBBB', SENSOR_FRAME_ACK, SENSOR_COMMAND_FRAME_SIZE, sensor_id, command)
 
 
-def _decode_mb1000_metadata_payload(payload: bytes) -> tuple[dict[str, int], None]:
-    if len(payload) != MB1000_METADATA_FRAME_SIZE:
-        raise ValueError(f'Metadata MB1000 requiere {MB1000_METADATA_FRAME_SIZE} bytes, recibidos {len(payload)}')
-
-    frame_type, dmin, dmax, vmin, vmax, amin, amax, expected_ack = struct.unpack_from('<BhhhhhhB', payload, SENSOR_FRAME_HEADER_SIZE)
-    if frame_type != FRAME_TYPE_METADATA:
-        raise ValueError(f'frame_type metadata invalido: 0x{frame_type:02X}')
-
-    raw_data = {
-        'frame_type': frame_type,
-        'distance_min_m': dmin,
-        'distance_max_m': dmax,
-        'velocity_min_m_s': vmin,
-        'velocity_max_m_s': vmax,
-        'acceleration_min_m_s2': amin,
-        'acceleration_max_m_s2': amax,
-        'expected_ack': expected_ack,
-    }
-    return raw_data, None
+def _extract_field_value(payload: bytes, field_spec: dict[str, Any], endianness: str) -> int:
+    byte_start = int(field_spec['byte_start'])
+    byte_end = int(field_spec['byte_end'])
+    signed = bool(field_spec.get('signed', False))
+    raw = payload[byte_start:byte_end + 1]
+    return int.from_bytes(raw, byteorder=endianness, signed=signed)
 
 
-def _decode_mb1000_measurement_payload(payload: bytes) -> tuple[dict[str, int], float]:
-    if len(payload) != MB1000_MEASUREMENT_FRAME_SIZE:
-        raise ValueError(f'Medicion MB1000 requiere {MB1000_MEASUREMENT_FRAME_SIZE} bytes, recibidos {len(payload)}')
-
-    frame_type, t_s_x100, d_m_x100, v_ms_x100, a_ms2_x100 = struct.unpack_from('<BIHhh', payload, SENSOR_FRAME_HEADER_SIZE)
-    if frame_type != FRAME_TYPE_MEASUREMENT:
-        raise ValueError(f'frame_type medicion invalido: 0x{frame_type:02X}')
-
-    raw_data = {
-        'frame_type': frame_type,
-        'time_s': t_s_x100,
-        'distance_m': d_m_x100,
-        'velocity_m_s': v_ms_x100,
-        'acceleration_m_s2': a_ms2_x100,
-    }
-    return raw_data, t_s_x100 / 100.0
-
-
-def _decode_lux_metadata_payload(payload: bytes) -> tuple[dict[str, int], None]:
-    if len(payload) != LUX_METADATA_FRAME_SIZE:
-        raise ValueError(f'Metadata Lux requiere {LUX_METADATA_FRAME_SIZE} bytes, recibidos {len(payload)}')
-
-    frame_type, lux_min, lux_max, expected_ack = struct.unpack_from('<BIIB', payload, SENSOR_FRAME_HEADER_SIZE)
-    if frame_type != FRAME_TYPE_METADATA:
-        raise ValueError(f'frame_type metadata Lux invalido: 0x{frame_type:02X}')
-
-    raw_data = {
-        'frame_type': frame_type,
-        'lux_min': lux_min,
-        'lux_max': lux_max,
-        'expected_ack': expected_ack,
-    }
-    return raw_data, None
-
-
-def _decode_lux_measurement_payload(payload: bytes) -> tuple[dict[str, int], float]:
-    if len(payload) != LUX_MEASUREMENT_FRAME_SIZE:
-        raise ValueError(f'Medicion Lux requiere {LUX_MEASUREMENT_FRAME_SIZE} bytes, recibidos {len(payload)}')
-
-    frame_type, t_s_x100, lux_x100 = struct.unpack_from('<BII', payload, SENSOR_FRAME_HEADER_SIZE)
-    if frame_type != FRAME_TYPE_MEASUREMENT:
-        raise ValueError(f'frame_type medicion Lux invalido: 0x{frame_type:02X}')
-
-    raw_data = {
-        'frame_type': frame_type,
-        'time_s': t_s_x100,
-        'lux': lux_x100,
-    }
-    return raw_data, t_s_x100 / 100.0
-
-
-def _decode_short_ack_payload(payload: bytes) -> tuple[dict[str, int], None]:
-    if len(payload) != SENSOR_SHORT_ACK_FRAME_SIZE:
-        raise ValueError(f'ACK corto requiere {SENSOR_SHORT_ACK_FRAME_SIZE} bytes, recibidos {len(payload)}')
-    ack_code = payload[SENSOR_FRAME_HEADER_SIZE]
-    return {'ack_code': ack_code}, None
-
-
-def _decode_sensor_frame(payload: Any, sensor_name: str, profile: dict[str, Any]) -> tuple[str, int, dict[str, int], float | None] | None:
+def _decode_fixed_sensor_frame(payload: Any, sensor_name: str, profile: dict[str, Any]) -> tuple[str, int, dict[str, int]] | None:
     if not isinstance(payload, bytes):
         print(f'[MEAS] Payload binario invalido para {sensor_name}: tipo {type(payload).__name__}, esperado bytes')
         return None
 
-    if len(payload) < SENSOR_FRAME_HEADER_SIZE:
-        print(f'[MEAS] Payload binario incompleto para {sensor_name}: {len(payload)} bytes, falta header de {SENSOR_FRAME_HEADER_SIZE}')
+    protocol = profile.get('protocol', {})
+    endianness = str(protocol.get('endianness', 'little'))
+    total_bytes_expected = _to_int(protocol.get('total_bytes'))
+    if total_bytes_expected is None:
+        print(f'[MEAS] Perfil sin total_bytes para {sensor_name}')
+        return None
+
+    if len(payload) != total_bytes_expected:
+        print(f'[MEAS] Longitud invalida para {sensor_name}: {len(payload)} bytes (esperado {total_bytes_expected})')
         return None
 
     ack, total_bytes, sensor_id = struct.unpack_from('<BBB', payload, 0)
-
-    if len(payload) != total_bytes:
-        status = 'incompleto' if len(payload) < total_bytes else 'con bytes extra'
-        print(f'[MEAS] Payload binario {status} para {sensor_name}: {len(payload)} bytes (total_bytes={total_bytes}, sensor_id=0x{sensor_id:02X})')
-        return None
-
     if ack != SENSOR_FRAME_ACK:
-        print(f'[MEAS] ACK invalido para {sensor_name}: 0x{ack:02X} (esperado 0x{SENSOR_FRAME_ACK:02X})')
+        print(f'[MEAS] ACK invalido para {sensor_name}: 0x{ack:02X}')
+        return None
+    if total_bytes != total_bytes_expected:
+        print(f'[MEAS] total_bytes invalido para {sensor_name}: {total_bytes} (esperado {total_bytes_expected})')
         return None
 
-    try:
-        if total_bytes == SENSOR_HEARTBEAT_FRAME_SIZE:
-            return 'heartbeat', sensor_id, {}, None
-        if total_bytes == SENSOR_SHORT_ACK_FRAME_SIZE:
-            raw_data, payload_t_s = _decode_short_ack_payload(payload)
-            return 'short_ack', sensor_id, raw_data, payload_t_s
-
-        metadata_fields = set(profile.get('metadata_fields', []))
-        binary_fields = set(profile.get('binary_fields', []))
-
-        if {'distance_min_m', 'distance_max_m', 'velocity_min_m_s', 'velocity_max_m_s', 'acceleration_min_m_s2', 'acceleration_max_m_s2'}.issubset(metadata_fields):
-            if total_bytes == MB1000_METADATA_FRAME_SIZE:
-                raw_data, payload_t_s = _decode_mb1000_metadata_payload(payload)
-                return 'metadata', sensor_id, raw_data, payload_t_s
-            if total_bytes == MB1000_MEASUREMENT_FRAME_SIZE:
-                raw_data, payload_t_s = _decode_mb1000_measurement_payload(payload)
-                return 'measurement', sensor_id, raw_data, payload_t_s
-
-        if {'lux_min', 'lux_max'}.issubset(metadata_fields) and 'lux' in binary_fields:
-            if total_bytes == LUX_METADATA_FRAME_SIZE:
-                raw_data, payload_t_s = _decode_lux_metadata_payload(payload)
-                return 'metadata', sensor_id, raw_data, payload_t_s
-            if total_bytes == LUX_MEASUREMENT_FRAME_SIZE:
-                raw_data, payload_t_s = _decode_lux_measurement_payload(payload)
-                return 'measurement', sensor_id, raw_data, payload_t_s
-    except Exception as e:
-        print(f'[MEAS] Error al decodificar frame de {sensor_name}:', e)
+    expected_sensor_id = _to_int(profile.get('sensor_id'))
+    if expected_sensor_id is not None and sensor_id != expected_sensor_id:
+        print(f'[MEAS] sensor_id no coincide para {sensor_name}: 0x{sensor_id:02X} (esperado 0x{expected_sensor_id:02X})')
         return None
 
-    print(f'[MEAS] Longitud de trama no soportada para {sensor_name}: total_bytes={total_bytes}')
-    return None
+    state_map = dict(protocol.get('state_map', {}))
+    state_offset = _to_int(protocol.get('state_offset'))
+    if state_offset is None or state_offset >= len(payload):
+        print(f'[MEAS] state_offset invalido para {sensor_name}')
+        return None
+
+    sensor_state = payload[state_offset]
+    protocol_state = state_map.get(sensor_state)
+    if protocol_state is None:
+        print(f'[MEAS] sensor_state no soportado para {sensor_name}: 0x{sensor_state:02X}')
+        return None
+
+    raw_data: dict[str, int] = {'sensor_state': sensor_state}
+    fields = dict(protocol.get('fields', {}))
+    for field_name, field_spec in fields.items():
+        if field_name == 'sensor_state':
+            continue
+        try:
+            raw_data[field_name] = _extract_field_value(payload, field_spec, endianness)
+        except Exception as e:
+            print(f'[MEAS] Error al extraer {field_name} de {sensor_name}: {e}')
+            return None
+
+    return protocol_state, sensor_id, raw_data
 
 
 # =========================
@@ -207,6 +123,7 @@ def supervisor_on_connect(client: mqtt.Client, userdata, flags, reason_code, pro
     print(f'[SUPERVISOR] Conectado al broker MQTT con codigo {rc}')
     if rc == 0:
         client.subscribe(state.AVAILABLE_TOPIC_PATTERN)
+
 
 
 def supervisor_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
@@ -242,6 +159,7 @@ def mqtt_on_connect(client: mqtt.Client, userdata, flags, reason_code, propertie
                     print('Error al subscribir a', t, e)
 
 
+
 def _update_sensor_seen(sensor_name: str) -> None:
     if sensor_name:
         with state.sensor_lock:
@@ -249,36 +167,51 @@ def _update_sensor_seen(sensor_name: str) -> None:
             state.sensor_last_seen[sensor_name] = time.time()
 
 
+
 def _store_protocol_state(sensor_name: str, protocol_state: str) -> None:
     with state.data_lock:
         state.sensor_protocol_state[sensor_name] = protocol_state
 
 
-def _store_sensor_metadata(sensor_name: str, raw_data: dict[str, int]) -> None:
-    profile = sensor_config.get_profile(sensor_name)
-    metadata_fields = set(profile.get('metadata_fields', []))
 
-    if {'distance_min_m', 'distance_max_m', 'velocity_min_m_s', 'velocity_max_m_s', 'acceleration_min_m_s2', 'acceleration_max_m_s2'}.issubset(metadata_fields):
-        metadata = {
-            'distance_min_m': raw_data['distance_min_m'] / 100.0,
-            'distance_max_m': raw_data['distance_max_m'] / 100.0,
-            'velocity_min_m_s': raw_data['velocity_min_m_s'] / 100.0,
-            'velocity_max_m_s': raw_data['velocity_max_m_s'] / 100.0,
-            'acceleration_min_m_s2': raw_data['acceleration_min_m_s2'] / 100.0,
-            'acceleration_max_m_s2': raw_data['acceleration_max_m_s2'] / 100.0,
-            'updated_at': time.time(),
-        }
-    elif {'lux_min', 'lux_max'}.issubset(metadata_fields):
-        metadata = {
-            'lux_min': raw_data['lux_min'] / 100.0,
-            'lux_max': raw_data['lux_max'] / 100.0,
-            'updated_at': time.time(),
-        }
-    else:
-        metadata = {'updated_at': time.time()}
+def _append_measurement_values(sensor_name: str, profile: dict[str, Any], raw_data: dict[str, int], selected_channels: set[str] | None) -> None:
+    metrics = profile.get('metrics', [])
+    values: dict[str, Optional[float]] = {}
+
+    for metric in metrics:
+        mid = metric['id']
+        if selected_channels is not None and mid not in selected_channels:
+            continue
+        source_field = metric.get('source_field')
+        raw = raw_data.get(source_field)
+        val = _to_float(raw)
+        if val is not None:
+            try:
+                val = val * float(metric.get('scale', 1.0))
+            except Exception:
+                pass
+        values[mid] = val
+
+    prefixed_values: dict[str, Optional[float]] = {f'{sensor_name}:{mid}': val for mid, val in values.items()}
 
     with state.data_lock:
-        state.sensor_metadata[sensor_name] = metadata
+        for pref_mid, val in prefixed_values.items():
+            state.last_values[pref_mid] = val
+
+        sample_period = float(profile.get('sample_period_s', state.SAMPLE_PERIOD_S))
+        t_rel_s = state.measurement_sample_index * sample_period
+        state.measurement_sample_index += 1
+        state.measurement_elapsed_s = t_rel_s
+        state.last_t_s = t_rel_s
+        state.buf_t_s.append(t_rel_s)
+
+        for mid in state.current_metric_ids:
+            if mid in prefixed_values:
+                val = prefixed_values[mid]
+            else:
+                val = state.last_values.get(mid)
+            state.buf_values[mid].append(val)
+
 
 
 def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
@@ -286,6 +219,7 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
         topic = msg.topic or ''
     except Exception:
         return
+
     parts = topic.split('/') if topic else []
     if len(parts) < 3 or parts[0] != state.EQ_PREFIX or parts[2] != 'data':
         return
@@ -299,126 +233,35 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
         selected_channels = state.selected_channel_map.get(sensor_name)
 
     profile = sensor_config.get_profile(sensor_name)
-    payload_format = str(profile.get('payload_format', 'json'))
-    metrics = profile.get('metrics', [])
-    raw_data: dict[str, Optional[float | int]] = {}
-    payload_t_s: Optional[float] = None
-    avg: Optional[int] = None
-    frame_kind: Optional[str] = None
+    payload_format = str(profile.get('payload_format', ''))
+    if payload_format != 'sensor_state_fixed_v1':
+        print(f'[MEAS] payload_format no soportado para {sensor_name}: {payload_format}')
+        return
 
-    if payload_format in {'sensor_id_frame_v1', 'mb1000_bin_v1', 'sensor_state_frame_v2'}:
-        decoded = _decode_sensor_frame(msg.payload, sensor_name, profile)
-        if decoded is None:
-            return
-        frame_kind, sensor_id, raw_data, payload_t_s = decoded
-        expected_sensor_id = profile.get('sensor_id')
-        if expected_sensor_id is not None:
-            expected_sensor_id_int = _to_int(expected_sensor_id)
-            if expected_sensor_id_int is None:
-                print(f'[MEAS] sensor_id invalido en perfil de {sensor_name}: {expected_sensor_id}')
-                return
-            if expected_sensor_id_int != sensor_id:
-                print(f'[MEAS] sensor_id no coincide para {sensor_name}: 0x{sensor_id:02X} (perfil espera 0x{expected_sensor_id_int:02X})')
-                return
+    decoded = _decode_fixed_sensor_frame(msg.payload, sensor_name, profile)
+    if decoded is None:
+        return
 
-        if frame_kind == 'heartbeat':
-            _store_protocol_state(sensor_name, 'heartbeat')
-            return
+    protocol_state, _sensor_id, raw_data = decoded
+    _store_protocol_state(sensor_name, protocol_state)
 
-        if frame_kind == 'short_ack':
-            ack_code = raw_data.get('ack_code')
-            if ack_code == ACK_SELECT:
-                _store_protocol_state(sensor_name, 'metadata')
-            elif ack_code == ACK_START:
-                _store_protocol_state(sensor_name, 'measuring')
-                with state.data_lock:
-                    state.is_measuring = True
-            elif ack_code == ACK_STOP:
-                _store_protocol_state(sensor_name, 'metadata')
-                with state.data_lock:
-                    state.is_measuring = False
-            elif ack_code == ACK_DESELECT:
-                _store_protocol_state(sensor_name, 'heartbeat')
-                with state.data_lock:
-                    state.is_measuring = False
-            elif ack_code == ACK_METADATA_TIMEOUT:
-                _store_protocol_state(sensor_name, 'heartbeat')
-                with state.data_lock:
-                    state.is_measuring = False
-            return
+    if protocol_state == 'heartbeat':
+        with state.data_lock:
+            state.is_measuring = False
+        return
 
-        if frame_kind == 'metadata':
-            _store_protocol_state(sensor_name, 'metadata')
-            _store_sensor_metadata(sensor_name, raw_data)
-            publish_sensor_command([sensor_name], SENSOR_COMMAND_ACK_METADATA)
-            return
+    if protocol_state == 'selected':
+        with state.data_lock:
+            state.is_measuring = False
+        publish_sensor_command([sensor_name], SENSOR_COMMAND_OK)
+        return
 
-        if frame_kind == 'measurement':
-            _store_protocol_state(sensor_name, 'measuring')
-            with state.data_lock:
-                state.is_measuring = True
-    else:
-        try:
-            payload = msg.payload.decode('utf-8', errors='ignore')
-            j = json.loads(payload)
-        except Exception as e:
-            print('Error al decodificar JSON:', e)
-            return
-
-        t_ms = _to_int(j.get('t_ms'))
-        if t_ms is None:
-            return
-
-        required = profile.get('required_keys', ['t_ms'])
-        for rk in required:
-            if rk == 't_ms':
-                continue
-            if rk not in j:
-                return
-
-        avg_key = profile.get('avg_dropped_key')
-        avg = _to_int(j.get(avg_key)) if avg_key else None
-        raw_data = j
-
-    values: dict[str, Optional[float]] = {}
-    for m in metrics:
-        mid = m['id']
-        if selected_channels is not None and mid not in selected_channels:
-            continue
-        field_name = m.get('binary_field') if payload_format in {'sensor_id_frame_v1', 'mb1000_bin_v1', 'sensor_state_frame_v2'} else m.get('json_key')
-        raw = raw_data.get(field_name)
-        val = _to_float(raw)
-        if val is not None:
-            try:
-                val = val * float(m.get('scale', 1.0))
-            except Exception:
-                pass
-        values[mid] = val
-
-    prefixed_values: dict[str, Optional[float]] = {f'{sensor_name}:{mid}': v for mid, v in values.items()}
+    if protocol_state != 'measuring':
+        return
 
     with state.data_lock:
-        state.last_avg_dropped = avg
-        for pref_mid, val in prefixed_values.items():
-            state.last_values[pref_mid] = val
-
-        if state.is_measuring:
-            if payload_t_s is not None:
-                t_rel_s = payload_t_s
-            else:
-                sample_period = float(profile.get('sample_period_s', state.SAMPLE_PERIOD_S))
-                t_rel_s = state.measurement_sample_index * sample_period
-                state.measurement_sample_index += 1
-            state.measurement_elapsed_s = t_rel_s
-            state.last_t_s = t_rel_s
-            state.buf_t_s.append(t_rel_s)
-
-            for mid in state.current_metric_ids:
-                if mid in prefixed_values:
-                    val = prefixed_values[mid]
-                else:
-                    val = state.last_values.get(mid)
-                state.buf_values[mid].append(val)
+        state.is_measuring = True
+    _append_measurement_values(sensor_name, profile, raw_data, selected_channels)
 
 
 # =========================
@@ -437,6 +280,7 @@ def start_supervisor_mqtt() -> mqtt.Client:
     return client
 
 
+
 def start_mqtt() -> mqtt.Client:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     if state.MQTT_USER:
@@ -447,6 +291,7 @@ def start_mqtt() -> mqtt.Client:
     client.loop_start()
     state.mqtt_client = client
     return client
+
 
 
 def publish_sensor_command(sensor_names: list[str], command: int) -> bool:
@@ -479,22 +324,27 @@ def publish_sensor_command(sensor_names: list[str], command: int) -> bool:
     return ok
 
 
+
 def publish_measurement_command(sensor_names: list[str], start: bool) -> bool:
     return publish_sensor_command(sensor_names, SENSOR_COMMAND_START if start else SENSOR_COMMAND_STOP)
+
 
 
 def publish_select_command(sensor_names: list[str]) -> bool:
     return publish_sensor_command(sensor_names, SENSOR_COMMAND_SELECT)
 
 
+
 def publish_deselect_command(sensor_names: list[str]) -> bool:
     return publish_sensor_command(sensor_names, SENSOR_COMMAND_DESELECT)
+
 
 
 def set_current_sensor(sensor: str) -> None:
     if not sensor:
         return
     set_current_sensors([sensor])
+
 
 
 def set_current_sensors(sensors: list[str]) -> None:
@@ -559,7 +409,7 @@ def set_current_sensors(sensors: list[str]) -> None:
                     client.unsubscribe(old_topic)
                 except Exception:
                     pass
-        for sensor_name, topic in new_topics.items():
+        for _sensor_name, topic in new_topics.items():
             if topic and topic not in old_topics.values():
                 try:
                     client.subscribe(topic)

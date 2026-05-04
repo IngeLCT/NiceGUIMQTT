@@ -106,6 +106,9 @@ current_metric_ids: list[str] = []
 is_measuring: bool = False
 measurement_sample_index: int = 0
 measurement_elapsed_s: float = 0.0
+measurement_start_ts: Optional[float] = None
+measurement_duration_s: Optional[float] = None
+auto_stop_sent: bool = False
 
 # Series guardadas
 # Estructura por serie:
@@ -145,6 +148,7 @@ def reset_all_state() -> None:
     """Reinicia buffers/series/estado de medicion (sin tocar sensor/topic ni discovery)."""
     global last_t_s, last_avg_dropped
     global is_measuring, measurement_sample_index, measurement_elapsed_s
+    global measurement_start_ts, measurement_duration_s, auto_stop_sent
     global series_data, series_counter, display_series_index
 
     with data_lock:
@@ -160,6 +164,9 @@ def reset_all_state() -> None:
         is_measuring = False
         measurement_sample_index = 0
         measurement_elapsed_s = 0.0
+        measurement_start_ts = None
+        measurement_duration_s = None
+        auto_stop_sent = False
 
         sensor_metadata.clear()
 
