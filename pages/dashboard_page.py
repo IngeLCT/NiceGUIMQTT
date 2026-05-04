@@ -704,9 +704,9 @@ def page_dashboard(sensors: str) -> None:
         ui.label('Duración').classes('text-sm')
         duration_selector = ui.select(
             options=list(DURATION_OPTIONS.keys()),
-            value='10 s',
+            value='30 s',
             label='Tiempo de duración',
-        )
+        ).style('min-width: 10rem')
         ui.button('Iniciar', on_click=start_measurement).props('color=positive')
         ui.button('Detener', on_click=stop_measurement).props('color=negative')
         ui.button('Guardar serie', on_click=save_series).style('background-color:#cccc00 !important; color:#000000 !important')
