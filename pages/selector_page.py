@@ -28,19 +28,24 @@ def page_index() -> None:
     ui.dark_mode().enable()
     ui.label(f'Selector de Sensor {state.EQ_PREFIX}/').classes('text-2xl font-bold')
     ui.label(
-        'Pulsa "Buscar sensores" para escanear durante unos segundos y luego selecciona uno para conectar.'
+        'Se hace un escaneo inicial automático y luego puedes volver a buscar sensores manualmente cuando lo necesites.'
     ).classes('text-sm').style('color: #f2f2f2')
 
     selected_sensor: str | None = None
     discovered_sensors: list[str] = []
     search_in_progress = False
-    SEARCH_WINDOW_S = 5.0
+    SEARCH_WINDOW_S = 10.0
     SEARCH_POLL_S = 0.25
 
     with ui.row().classes('w-full items-center gap-4'):
         ui.label('Sensores').classes('text-sm')
-        status = ui.label('Pulsa "Buscar sensores" para iniciar un escaneo.').classes('text-sm')
+        status = ui.label('Preparando escaneo inicial...').classes('text-sm')
         proto_status = ui.label('Seleccionado: --').classes('text-xs')
+
+    with ui.row().classes('w-full items-center gap-2') as search_indicator:
+        ui.spinner(size='lg', color='orange')
+        ui.label('Buscando sensores...').classes('text-sm text-orange-300')
+    search_indicator.set_visibility(False)
 
     @ui.refreshable
     def sensor_checklist() -> None:
@@ -79,7 +84,7 @@ def page_index() -> None:
         selected_sensor = None
         sensor_checklist.refresh()
 
-    async def search_sensors() -> None:
+    async def search_sensors(auto: bool = False) -> None:
         nonlocal selected_sensor, discovered_sensors, search_in_progress
 
         if search_in_progress:
@@ -88,8 +93,9 @@ def page_index() -> None:
         search_in_progress = True
         selected_sensor = None
         discovered: set[str] = set()
-        status.text = 'Buscando sensores durante 5 s...'
+        status.text = 'Buscando sensores...' if not auto else 'Escaneo inicial en progreso...'
         proto_status.text = 'Seleccionado: --'
+        search_indicator.set_visibility(True)
         sensor_checklist.refresh()
 
         started_at = time.time()
@@ -105,8 +111,6 @@ def page_index() -> None:
                     if now - last <= state.SENSOR_STALE_S:
                         discovered.add(s)
 
-            remaining = max(0.0, SEARCH_WINDOW_S - elapsed)
-            status.text = f'Buscando sensores... {remaining:.1f} s'
             await asyncio.sleep(SEARCH_POLL_S)
 
         discovered_sensors = sorted(discovered)
@@ -115,12 +119,9 @@ def page_index() -> None:
         else:
             status.text = f'Sensores encontrados: {len(discovered_sensors)}'
 
+        search_indicator.set_visibility(False)
         sensor_checklist.refresh()
         search_in_progress = False
-
-    with ui.row().classes('gap-2'):
-        ui.button('Buscar sensores', on_click=search_sensors).props('color=primary')
-        ui.button('Limpiar selección', on_click=clear_selection).style('background-color:#737373 !important; color:#ffffff !important')
 
     async def connect_and_open_dashboard() -> None:
         if search_in_progress:
@@ -155,4 +156,9 @@ def page_index() -> None:
 
         ui.notify('Tiempo de espera agotado: el sensor no confirmó conexión', type='negative')
 
-    ui.button('Conectar', on_click=connect_and_open_dashboard).props('color=primary')
+    with ui.row().classes('gap-2'):
+        ui.button('Buscar sensores', on_click=search_sensors).props('color=primary')
+        ui.button('Limpiar selección', on_click=clear_selection).style('background-color:#737373 !important; color:#ffffff !important')
+        ui.button('Conectar', on_click=connect_and_open_dashboard).style('background-color:#ff8533 !important; color:#ffffff !important')
+
+    ui.timer(0.1, lambda: asyncio.create_task(search_sensors(auto=True)), once=True)
