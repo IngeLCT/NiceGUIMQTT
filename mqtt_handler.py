@@ -174,7 +174,7 @@ def _store_protocol_state(sensor_name: str, protocol_state: str) -> None:
 
 
 
-def _append_measurement_values(sensor_name: str, profile: dict[str, Any], raw_data: dict[str, int], selected_channels: set[str] | None) -> None:
+def _append_measurement_values(sensor_name: str, profile: dict[str, Any], raw_data: dict[str, int], selected_channels: set[str] | None) -> str:
     metrics = profile.get('metrics', [])
     values: dict[str, Optional[float]] = {}
 
@@ -188,22 +188,32 @@ def _append_measurement_values(sensor_name: str, profile: dict[str, Any], raw_da
         if val is not None:
             try:
                 val = val * float(metric.get('scale', 1.0))
+                val = round(val, 2)
             except Exception:
                 pass
         values[mid] = val
 
     prefixed_values: dict[str, Optional[float]] = {f'{sensor_name}:{mid}': val for mid, val in values.items()}
 
+    t_rel_s = _to_float(raw_data.get('time_s_x100'))
+    if t_rel_s is None:
+        sample_period = float(profile.get('sample_period_s', state.SAMPLE_PERIOD_S))
+        t_rel_s = state.measurement_sample_index * sample_period
+    else:
+        t_rel_s = t_rel_s / 100.0
+    t_rel_s = round(float(t_rel_s), 2)
+
     with state.data_lock:
+        measurement_duration_s = state.measurement_duration_s
+        auto_stop_sent = state.auto_stop_sent
+        if measurement_duration_s is not None and not auto_stop_sent:
+            duration = round(float(measurement_duration_s), 2)
+            if t_rel_s > duration:
+                state.auto_stop_sent = True
+                return 'skip_and_stop'
+
         for pref_mid, val in prefixed_values.items():
             state.last_values[pref_mid] = val
-
-        t_rel_s = _to_float(raw_data.get('time_s_x100'))
-        if t_rel_s is None:
-            sample_period = float(profile.get('sample_period_s', state.SAMPLE_PERIOD_S))
-            t_rel_s = state.measurement_sample_index * sample_period
-        else:
-            t_rel_s = t_rel_s / 100.0
 
         state.measurement_sample_index += 1
         state.measurement_elapsed_s = t_rel_s
@@ -216,6 +226,12 @@ def _append_measurement_values(sensor_name: str, profile: dict[str, Any], raw_da
             else:
                 val = state.last_values.get(mid)
             state.buf_values[mid].append(val)
+
+        if measurement_duration_s is not None and not auto_stop_sent and t_rel_s >= round(float(measurement_duration_s), 2):
+            state.auto_stop_sent = True
+            return 'append_and_stop'
+
+    return 'append'
 
 
 
@@ -266,7 +282,9 @@ def mqtt_on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> Non
 
     with state.data_lock:
         state.is_measuring = True
-    _append_measurement_values(sensor_name, profile, raw_data, selected_channels)
+    append_result = _append_measurement_values(sensor_name, profile, raw_data, selected_channels)
+    if append_result in {'append_and_stop', 'skip_and_stop'}:
+        publish_measurement_command([sensor_name], start=False)
 
 
 # =========================

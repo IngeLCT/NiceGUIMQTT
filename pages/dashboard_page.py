@@ -381,7 +381,7 @@ def page_dashboard(sensors: str) -> None:
                             v = vals.get(mid, [])[i]
                         except Exception:
                             v = None
-                        row.append('' if v is None else f"{v}")
+                        row.append('' if v is None else f"{float(v):.2f}")
                     w.writerow(row)
 
         ui.download.file(state.CSV_EXPORT_FILE)
@@ -423,7 +423,7 @@ def page_dashboard(sensors: str) -> None:
             for mid in metric_ids:
                 y = y_map.get(mid, [])
                 val = y[i] if i < len(y) else None
-                row[mid] = '' if val is None else f'{val}'
+                row[mid] = '' if val is None else f'{float(val):.2f}'
             rows.append(row)
         return rows
 
@@ -458,7 +458,7 @@ def page_dashboard(sensors: str) -> None:
 
         # Etiquetas
         if t_label is not None:
-            t_label.text = f"t_s: {lts if lts is not None else '--'}"
+            t_label.text = f"t_s: {float(lts):.2f}" if lts is not None else 't_s: --'
         if protocol_label is not None:
             protocol_label.text = 'Estado: ' + ' | '.join(f'{s}: {protocol_map.get(s, "--")}' for s in sensor_names)
 
@@ -471,14 +471,12 @@ def page_dashboard(sensors: str) -> None:
                 if val is None:
                     s = '--'
                 else:
-                    s = f'{float(val):.2f}'.rstrip('0').rstrip('.')  # 26.0 -> "26", 26.50 -> "26.5"
+                    s = f'{float(val):.2f}'
 
                 lbl.text = f"{m['label']}: {s} {unit}".strip()
 
         if dropped_label is not None:
-            dropped_label.text = f"avg_dropped: {lavg if (show_avg and lavg is not None) else '--'}"
-            if lavg is None:
-                dropped_label.text = ' '
+            dropped_label.text = f"avg_dropped: {float(lavg):.2f}" if (show_avg and lavg is not None) else ' '
 
         # Figuras
         for m in metric_defs:
