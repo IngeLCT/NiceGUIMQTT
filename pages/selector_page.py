@@ -1,11 +1,11 @@
 """
 Página de NiceGUI para seleccionar un sensor.
 
-Esta página enumera todos los sensores detectados y permite al usuario
-seleccionar un solo sensor. Al seleccionar un sensor, la aplicación
-espera la confirmación de conexión del protocolo antes de abrir el dashboard.
-La lista de sensores disponibles se actualiza periódicamente leyendo el
-conjunto ``available_sensors`` de ``state``.
+Esta página enumera los sensores detectados bajo demanda. El usuario pulsa
+"Buscar sensores" y la aplicación observa durante algunos segundos qué
+sensores siguen publicando; al terminar, actualiza la lista encontrada.
+Después, al seleccionar un sensor, la aplicación espera la confirmación de
+conexión del protocolo antes de abrir el dashboard.
 
 Para registrar la página con NiceGUI, simplemente importe este módulo en su
 script principal. La ruta se define mediante el decorador ``@ui.page``.
@@ -28,42 +28,34 @@ def page_index() -> None:
     ui.dark_mode().enable()
     ui.label(f'Selector de Sensor {state.EQ_PREFIX}/').classes('text-2xl font-bold')
     ui.label(
-        f'Se detectan automáticamente los sensores de {state.EQ_PREFIX}/; puedes seleccionar y conectar un sensor antes de abrir el dashboard.'
+        'Pulsa "Buscar sensores" para escanear durante unos segundos y luego selecciona uno para conectar.'
     ).classes('text-sm').style('color: #f2f2f2')
 
     selected_sensor: str | None = None
+    discovered_sensors: list[str] = []
+    search_in_progress = False
+    SEARCH_WINDOW_S = 5.0
+    SEARCH_POLL_S = 0.25
 
     with ui.row().classes('w-full items-center gap-4'):
         ui.label('Sensores').classes('text-sm')
-        status = ui.label('Buscando sensores...').classes('text-sm')
-        proto_status = ui.label('').classes('text-xs')
+        status = ui.label('Pulsa "Buscar sensores" para iniciar un escaneo.').classes('text-sm')
+        proto_status = ui.label('Seleccionado: --').classes('text-xs')
 
     @ui.refreshable
     def sensor_checklist() -> None:
         nonlocal selected_sensor
-        now = time.time()
-        with state.sensor_lock:
-            alive: list[str] = []
-            for s in list(state.available_sensors):
-                last = state.sensor_last_seen.get(s, 0.0)
-                if now - last <= state.SENSOR_STALE_S:
-                    alive.append(s)
-                else:
-                    state.available_sensors.discard(s)
-                    state.sensor_last_seen.pop(s, None)
-                    if selected_sensor == s:
-                        selected_sensor = None
-            opts = sorted(alive)
 
-        if not opts:
-            status.text = 'No se detectaron sensores, Buscando sensores...'
-            proto_status.text = ''
+        if not discovered_sensors:
+            with ui.card().classes('w-full max-w-2xl'):
+                ui.label('No hay sensores en la lista.').classes('text-sm text-gray-400')
+                ui.label('Usa el botón "Buscar sensores" para hacer un escaneo manual.').classes('text-xs text-gray-500')
+            proto_status.text = 'Seleccionado: --'
             return
 
-        status.text = f'Sensores detectados: {len(opts)}'
         with ui.card().classes('w-full max-w-2xl'):
             with ui.column().classes('max-h-72 overflow-auto gap-1'):
-                for s in opts:
+                for s in discovered_sensors:
                     def _on_change(e, name=s) -> None:
                         nonlocal selected_sensor
                         if e.value:
@@ -78,20 +70,63 @@ def page_index() -> None:
                             pstate = state.sensor_protocol_state.get(s, 'heartbeat')
                         ui.label(f'estado: {pstate}').classes('text-xs text-gray-400')
 
-        proto_status.text = 'Seleccionado: ' + (selected_sensor if selected_sensor in opts else '--')
+        proto_status.text = 'Seleccionado: ' + (selected_sensor if selected_sensor in discovered_sensors else '--')
 
     sensor_checklist()
-    ui.timer(0.5, sensor_checklist.refresh)
 
     def clear_selection() -> None:
         nonlocal selected_sensor
         selected_sensor = None
         sensor_checklist.refresh()
 
+    async def search_sensors() -> None:
+        nonlocal selected_sensor, discovered_sensors, search_in_progress
+
+        if search_in_progress:
+            return
+
+        search_in_progress = True
+        selected_sensor = None
+        discovered: set[str] = set()
+        status.text = 'Buscando sensores durante 5 s...'
+        proto_status.text = 'Seleccionado: --'
+        sensor_checklist.refresh()
+
+        started_at = time.time()
+        while True:
+            elapsed = time.time() - started_at
+            if elapsed >= SEARCH_WINDOW_S:
+                break
+
+            now = time.time()
+            with state.sensor_lock:
+                for s in list(state.available_sensors):
+                    last = state.sensor_last_seen.get(s, 0.0)
+                    if now - last <= state.SENSOR_STALE_S:
+                        discovered.add(s)
+
+            remaining = max(0.0, SEARCH_WINDOW_S - elapsed)
+            status.text = f'Buscando sensores... {remaining:.1f} s'
+            await asyncio.sleep(SEARCH_POLL_S)
+
+        discovered_sensors = sorted(discovered)
+        if not discovered_sensors:
+            status.text = 'No se detectaron sensores en el escaneo. Puedes volver a intentar.'
+        else:
+            status.text = f'Sensores encontrados: {len(discovered_sensors)}'
+
+        sensor_checklist.refresh()
+        search_in_progress = False
+
     with ui.row().classes('gap-2'):
-        ui.button('Limpiar', on_click=clear_selection).style('background-color:#737373 !important; color:#ffffff !important')
+        ui.button('Buscar sensores', on_click=search_sensors).props('color=primary')
+        ui.button('Limpiar selección', on_click=clear_selection).style('background-color:#737373 !important; color:#ffffff !important')
 
     async def connect_and_open_dashboard() -> None:
+        if search_in_progress:
+            ui.notify('Espera a que termine la búsqueda actual', type='warning')
+            return
+
         if not selected_sensor:
             ui.notify('Selecciona un sensor', type='negative')
             return
