@@ -106,14 +106,21 @@ def page_index() -> None:
         status.text = f'Sensores disponibles: {len(discovered_sensors)}' if discovered_sensors else 'Sin sensores disponibles por ahora.'
         return changed
 
+    def update_search_indicator() -> None:
+        has_sensors = bool(discovered_sensors)
+        search_indicator.set_visibility(not has_sensors)
+        if has_sensors:
+            status.text = f'Sensores disponibles: {len(discovered_sensors)}'
+        else:
+            status.text = 'Buscando sensores...'
+
     async def initial_discovery() -> None:
         nonlocal initial_scan_in_progress
         if initial_scan_in_progress:
             return
 
         initial_scan_in_progress = True
-        status.text = 'Escaneo inicial en progreso...'
-        search_indicator.set_visibility(True)
+        update_search_indicator()
 
         started_at = time.time()
         saw_change = False
@@ -121,12 +128,14 @@ def page_index() -> None:
             if sync_sensor_list():
                 saw_change = True
                 sensor_checklist.refresh()
+            update_search_indicator()
+            if discovered_sensors:
+                break
             await asyncio.sleep(INITIAL_POLL_S)
 
         if sync_sensor_list() or not saw_change:
             sensor_checklist.refresh()
-
-        search_indicator.set_visibility(False)
+        update_search_indicator()
         initial_scan_in_progress = False
 
     async def monitor_sensor_changes() -> None:
@@ -134,6 +143,7 @@ def page_index() -> None:
             return
         if sync_sensor_list():
             sensor_checklist.refresh()
+        update_search_indicator()
 
     async def connect_and_open_dashboard() -> None:
 
