@@ -200,6 +200,7 @@ def page_dashboard(sensors: str) -> None:
     dropped_label = None
     protocol_label = None
     metric_labels: Dict[str, Any] = {}
+    last_protocol_text: str | None = None
 
     series_selector = None
     duration_selector = None
@@ -429,6 +430,7 @@ def page_dashboard(sensors: str) -> None:
 
     def update_plots() -> None:
         """Actualiza gráficas, etiquetas y tabla."""
+        nonlocal last_protocol_text
         should_auto_stop = False
         with state.data_lock:
             protocol_map = {s: state.sensor_protocol_state.get(s, 'desconocido') for s in sensor_names}
@@ -459,8 +461,10 @@ def page_dashboard(sensors: str) -> None:
         # Etiquetas
         if t_label is not None:
             t_label.text = f"t_s: {float(lts):.2f}" if lts is not None else 't_s: --'
-        if protocol_label is not None:
-            protocol_label.text = 'Estado: ' + ' | '.join(f'{s}: {protocol_map.get(s, "--")}' for s in sensor_names)
+        current_protocol_text = ' | '.join(f'{s}: {protocol_map.get(s, "--")}' for s in sensor_names)
+        if current_protocol_text != last_protocol_text:
+            print(f'[dashboard] estado protocolo: {current_protocol_text}')
+            last_protocol_text = current_protocol_text
 
         for m in metric_defs:
             mid = m['id']
@@ -573,7 +577,7 @@ def page_dashboard(sensors: str) -> None:
     ui.dark_mode().enable()
     ui.button('⟵ Volver', on_click=go_back).props('flat color=primary')
     # Encabezado que muestra los sensores seleccionados
-    display_names = {s: sensor_config.get_sensor_display_name(s) for s in sensor_names}
+    display_names = {s: sensor_config.get_sensor_dashboard_name(s) for s in sensor_names}
 
     ui.label(
         f"Dashboard - Sensor de {', '.join([display_names.get(s, s) for s in sensor_names])}"
@@ -581,7 +585,6 @@ def page_dashboard(sensors: str) -> None:
 
     with ui.row().classes('w-full items-center gap-6'):
         t_label = ui.label('t_s: --').classes('text-lg font-bold')
-        protocol_label = ui.label('Estado: --').classes('text-sm')
         for m in metric_defs:
             midp = m['id']
             lbl = ui.label(f"{m['label']}: -- {m.get('unit','')}".strip()).classes('text-lg font-bold')

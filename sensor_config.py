@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import re
 
 
 def sensor_type(sensor_name: str) -> str:
@@ -254,6 +255,20 @@ def get_sensor_display_name(sensor_name: str) -> str:
     prof = get_profile(sensor_name)
     name = prof.get('Name') or prof.get('name')
     return str(name) if name else sensor_name
+
+
+def get_sensor_dashboard_name(sensor_name: str) -> str:
+    sensor_name = (sensor_name or '').strip()
+    match = re.search(r'(\d+)$', sensor_name)
+    suffix = match.group(1) if match else ''
+
+    stype = sensor_type(sensor_name)
+    if stype == 'MB1000':
+        return f'Movimiento{suffix}' if suffix else 'Movimiento'
+    if stype == 'VEML7700':
+        return f'Lux{suffix}' if suffix else 'Lux'
+
+    return sensor_name
 
 
 def get_metric_by_id(sensor_name: str, metric_id: str) -> Dict[str, Any] | None:

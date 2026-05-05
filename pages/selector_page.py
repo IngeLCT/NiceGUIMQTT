@@ -72,9 +72,6 @@ def page_index() -> None:
 
                     with ui.row().classes('items-center gap-3'):
                         ui.checkbox(s, value=(s == selected_sensor), on_change=_on_change)
-                        with state.data_lock:
-                            pstate = state.sensor_protocol_state.get(s, 'heartbeat')
-                        ui.label(f'estado: {pstate}').classes('text-xs text-gray-400')
 
         proto_status.text = 'Seleccionado: ' + (selected_sensor if selected_sensor in discovered_sensors else '--')
 
